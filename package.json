@@ -1,0 +1,13 @@
+{
+  "name": "angel-mortal-gas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Google Apps Script webhook implementation of the Angel/Mortal Telegram bot",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node test/run-tests.js"
+  }
+}

@@ -1,0 +1,185 @@
+{
+  "title": "Angel/Devil Mortal",
+  "description": "Sign up for a one-to-one Angel/Devil and Mortal event. Your numeric Telegram user ID lets the relay bots identify you without a registration code.",
+  "settings": {
+    "collectEmail": false,
+    "limitOneResponsePerUser": false
+  },
+  "defaultResponses": [],
+  "sections": [
+    {
+      "key": "main"
+    },
+    {
+      "key": "devil_details",
+      "title": "Devil and Mortal",
+      "description": "Devils provide welfare and may also plan pranks. Follow the event rules and the mortal's stated boundaries.",
+      "after": "declaration"
+    },
+    {
+      "key": "declaration",
+      "title": "Declaration",
+      "description": "Read the event rules and help keep the event safe and enjoyable for everyone.",
+      "after": "channel"
+    },
+    {
+      "key": "channel",
+      "title": "Telegram Channel!",
+      "description": "Ask the organiser for the event announcement-channel link.",
+      "after": "submit"
+    }
+  ],
+  "questions": [
+    {
+      "key": "name",
+      "section": "main",
+      "type": "short_answer",
+      "title": "What’s your name? 👀",
+      "required": true
+    },
+    {
+      "key": "gender",
+      "section": "main",
+      "type": "multiple_choice",
+      "title": "Gender?",
+      "choices": ["Female", "Male", "Other"],
+      "required": true
+    },
+    {
+      "key": "room",
+      "section": "main",
+      "type": "short_answer",
+      "title": "What’s your room no.! [#LL-RRR]🤌",
+      "description": "e.g. #20-114, #18-108E for suites",
+      "validation": {
+        "type": "text_contains",
+        "value": "#",
+        "error": "Please follow the provided format!"
+      },
+      "required": true
+    },
+    {
+      "key": "telegramHandle",
+      "section": "main",
+      "type": "short_answer",
+      "title": "What’s your tele handle? [@…] 💅",
+      "description": "e.g. @username",
+      "validation": {
+        "type": "text_contains",
+        "value": "@",
+        "error": "Please follow the provided format!"
+      },
+      "required": true
+    },
+    {
+      "key": "telegramId",
+      "section": "main",
+      "type": "short_answer",
+      "title": "What’s your tele Telegram user id?",
+      "description": "Enter the numeric ID shown by @userinfobot, not your @handle.",
+      "validation": {
+        "type": "number_greater_than",
+        "value": 1,
+        "error": "Please enter your numeric Telegram user ID, not your handle."
+      },
+      "required": true
+    },
+    {
+      "key": "year",
+      "section": "main",
+      "type": "multiple_choice",
+      "title": "What’s your year of study?",
+      "choices": ["Year 1", "Year 2", "Year 3", "Year 4"],
+      "required": true
+    },
+    {
+      "key": "faculty",
+      "section": "main",
+      "type": "short_answer",
+      "title": "Which faculty are you from!",
+      "required": true
+    },
+    {
+      "key": "interests",
+      "section": "main",
+      "type": "short_answer",
+      "title": "Share some of your interests! ✍️",
+      "required": true
+    },
+    {
+      "key": "specialRequirements",
+      "section": "main",
+      "type": "short_answer",
+      "title": "Do you have any special requirements? (e.g. allergies, etc.)",
+      "required": true
+    },
+    {
+      "key": "genderPreference",
+      "section": "main",
+      "type": "multiple_choice",
+      "title": "Any gender preference for A&M? 🤔",
+      "choices": ["Same gender", "Fine with anything"],
+      "required": true
+    },
+    {
+      "key": "mode",
+      "section": "main",
+      "type": "multiple_choice",
+      "title": "Angel and Mortal (welfare only) or Devil and Mortal (welfare and pranks)?",
+      "description": "You can set prank boundaries and a tolerance level if you choose Devil.",
+      "choices": [
+        {
+          "value": "Angel and Mortal 👼",
+          "target": "declaration"
+        },
+        {
+          "value": "Devil and Mortal 😈",
+          "target": "devil_details"
+        }
+      ],
+      "required": true
+    },
+    {
+      "key": "prankTolerance",
+      "section": "devil_details",
+      "type": "linear_scale",
+      "title": "Level of Prank Tolerance",
+      "description": "1 - limited to easily reversible pranks (posters/sticky notes/extra chalk on your door)\n2 - slightly further, okay with pranks that slightly affect the general area (double sided tape on slippers, slime on door handle)\n3 - the midpoint, pranks may somewhat hinder day to day activities (relocating footwear, moderately obstructing room entrance)\n4 - more extreme, pranks could take quite some time to remedy (rearranging the room in an inconvenient manner)\n5 - all hell breaks loose, everything not covered in the rules is free game (good luck)",
+      "scale": {
+        "lower": 1,
+        "upper": 5,
+        "lowLabel": "don't hurt me",
+        "highLabel": "I'm a masochist"
+      },
+      "required": true
+    },
+    {
+      "key": "roomEntry",
+      "section": "devil_details",
+      "type": "multiple_choice",
+      "title": "Are you okay with your devil entering your room?",
+      "description": "(you may specify and set boundaries of what they can/cannot do if you choose to allow this)",
+      "choices": ["heck yea", "nah stay out pls"],
+      "required": true
+    },
+    {
+      "key": "boundaries",
+      "section": "devil_details",
+      "type": "checkboxes",
+      "title": "Please specify any boundaries/things that are off limits for your devil [Tick to indicate OFF LIMIT]",
+      "description": "This includes what you do NOT want touched, information you do not want on posters, and how far your room may be changed. Be as specific as possible!",
+      "choices": ["Valuables: laptop, monitor", "Pictures / Posters", "Room Creative ”Vandalism”", "Room Furniture"],
+      "other": true,
+      "required": true
+    },
+    {
+      "key": "declaration",
+      "section": "declaration",
+      "type": "multiple_choice",
+      "title": "I have looked through and understood the rules of this event and agree to respect the boundaries set by my mortal.",
+      "description": "For questions, contact the event organisers.",
+      "choices": ["I have understood the rules."],
+      "required": true
+    }
+  ]
+}
