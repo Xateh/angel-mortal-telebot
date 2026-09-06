@@ -79,7 +79,7 @@ function buildFormItems_(form, schema) {
       if (entry.question.section === section.key) finalItems.push(entry.item);
     });
   });
-  finalItems.forEach(function (item, index) { form.moveItem(item, index); });
+  finalItems.forEach(function (item, index) { form.moveItem(item.getIndex(), index); });
 
   for (var index = 0; index < sections.length - 1; index += 1) {
     var current = sections[index];

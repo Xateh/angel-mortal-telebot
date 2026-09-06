@@ -60,6 +60,8 @@ Release mode rejects a missing, empty, unreadable, or tracked denylist.
 6. The function creates a published Form, links it to a new response spreadsheet, creates `Angel Mortal Roster`, and stores the new spreadsheet IDs in Script Properties. It returns the new Form and Sheet identifiers and URLs. Keep them private. If the editor does not display the return value, open the two newly created files by title from your own Google Drive.
 7. Run `setupProject` once. This reapplies the roster setup and creates missing `ANGEL_WEBHOOK_KEY`, `MORTAL_WEBHOOK_KEY`, and `ADMIN_WEBHOOK_KEY` Script Properties.
 
+If `createEmptyAngelMortalStack` fails, do not immediately run it again: it may already have created a partial Form and spreadsheet. Inspect the execution error and identify only the files created by that failed run in your own Drive. Move those partial test files to Trash before retrying with the corrected build. Never delete an existing event's files. A successful run does not need to be repeated.
+
 Do not paste any returned URL or ID into this repository, an issue, terminal history, or shared log.
 
 ### Verify the Form before sharing it

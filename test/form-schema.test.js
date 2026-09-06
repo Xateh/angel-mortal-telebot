@@ -33,6 +33,7 @@ class MockItem {
   setTitle(value) { this.title = value; return this; }
   setHelpText(value) { this.helpText = value; return this; }
   setRequired(value) { this.required = value; return this; }
+  getIndex() { return this.form.items.indexOf(this); }
 }
 
 class MockChoiceItem extends MockItem {
@@ -68,10 +69,13 @@ class MockForm {
   addCheckboxItem() { return new MockCheckboxItem(this, "checkboxes"); }
   addScaleItem() { return new MockScaleItem(this, "linear_scale"); }
   addPageBreakItem() { return new MockPageBreakItem(this, "section"); }
-  moveItem(item, index) {
-    const current = this.items.indexOf(item);
-    assert.notEqual(current, -1, "moveItem received an unknown item");
-    this.items.splice(current, 1);
+  moveItem(from, index) {
+    // Google rejects typed question items here; exercise its integer overload.
+    assert.equal(Number.isInteger(from), true, "moveItem needs an index, not a typed Form item");
+    assert.equal(Number.isInteger(index), true);
+    assert.ok(from >= 0 && from < this.items.length);
+    assert.ok(index >= 0 && index < this.items.length);
+    const [item] = this.items.splice(from, 1);
     this.items.splice(index, 0, item);
     return item;
   }
