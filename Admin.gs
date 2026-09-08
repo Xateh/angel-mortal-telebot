@@ -1,31 +1,11 @@
 function captureAdminTelegramId() {
   requireProperty_("ADMIN_BOT_TOKEN");
-  if (getProperty_("ADMIN_TELEGRAM_ID")) {
-    return "Telegram organiser ID is already configured.";
+  // Compatibility entry point: only validate an ID explicitly set by the owner.
+  // Never infer administrator privileges from untrusted incoming messages.
+  if (!/^[1-9]\d{4,19}$/.test(getProperty_("ADMIN_TELEGRAM_ID"))) {
+    throw new Error("Set ADMIN_TELEGRAM_ID in Script Properties to your verified numeric Telegram ID. Automatic binding from messages is disabled.");
   }
-
-  // getUpdates cannot run while a webhook is active. Preserve queued updates so
-  // the organiser's private /start can be used for this one-time binding.
-  telegramDeleteWebhook_("admin", false);
-  var updates = telegramApi_("admin", "getUpdates", {
-    timeout: 0,
-    limit: 100,
-    allowed_updates: JSON.stringify(["message"])
-  });
-  var candidates = (updates || []).filter(function (update) {
-    var message = update.message;
-    return message && message.from && message.chat && message.chat.type === "private" &&
-      extractCommand_(message.text || "") &&
-      extractCommand_(message.text || "").name === "start";
-  });
-  if (!candidates.length) {
-    throw new Error("Send /start to the Admin bot in a private chat, then run captureAdminTelegramId again.");
-  }
-
-  var latest = candidates[candidates.length - 1].message;
-  getScriptProperties_().setProperty("ADMIN_TELEGRAM_ID", String(latest.from.id));
-  notifyUser_("Admin bot", "Telegram organiser ID captured.");
-  return "Telegram organiser ID captured.";
+  return "Telegram organiser ID is already configured.";
 }
 
 function handleAdminUpdate_(update) {

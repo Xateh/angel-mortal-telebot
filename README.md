@@ -4,6 +4,8 @@ This repository builds an anonymous two-bot relay backed by a Google Form and Go
 
 There is no registration code. Each participant is identified by the numeric Telegram ID submitted in the Form. Every incoming message reloads the current Form data and current `Mortal` mapping, so a remap takes effect on the next message. Invalid, stale, incomplete, or ambiguous mappings fail closed; they never fall back to an earlier recipient.
 
+Required Form errors on either person in the current pair also block relays, `/start` registration/partner notices, and mortal introductions until corrected. Devil-tolerance fit warnings remain advisory; unrelated unfinished pairs do not block a valid pair.
+
 The documented default uses current free service tiers. It needs no paid plan, payment card, owned domain, or Google Cloud billing project. Provider availability, policies, pricing, and quotas can change. This setup is intended for a low-volume event, not guaranteed permanent free hosting.
 
 ## 1. Architecture and operating rules
@@ -105,12 +107,14 @@ In Apps Script, open **Project Settings > Script properties**. Set these values 
 | `ANGEL_BOT_USERNAME` | discovered by `setupWebhooks()` | optional/automatic |
 | `MORTAL_BOT_USERNAME` | discovered by `setupWebhooks()` | optional/automatic |
 | `ADMIN_BOT_TOKEN` | optional Admin BotFather token | optional |
-| `ADMIN_TELEGRAM_ID` | captured by `captureAdminTelegramId()` | required only with Admin bot |
+| `ADMIN_TELEGRAM_ID` | organizer's independently verified numeric Telegram ID, entered manually | required only with Admin bot |
 | `TEST_MODE_ENABLED` | literal `true` enables isolated loopback | optional, temporary |
 | `TEST_TELEGRAM_ID` | one controlled numeric Telegram ID | optional, temporary |
 | `TEST_TELEGRAM_NAME` | controlled tester display name | optional, temporary |
 
 `SUPPORT_HANDLES` may contain one or more handles separated by commas. Participant failure notices use this setting; no real organizer identity belongs in source.
+
+For the optional Admin bot, independently verify the organizer's numeric Telegram ID and enter it as `ADMIN_TELEGRAM_ID` in Script Properties before installing webhooks. Never select an administrator from the most recent `/start` message. The retained `captureAdminTelegramId()` function only validates the manually entered ID; it does not read messages, change the ID, or remove webhooks. Existing IDs are preserved, so verify any ID previously assigned by an older version. The organizer must also open the Admin bot and send `/start` to receive replies.
 
 ## 7. Deploy Apps Script
 
@@ -192,6 +196,8 @@ Use only the isolated stack and controlled accounts. Never message production pa
 - `inspectWebhookStatus` remains installed with no growing backlog or recent Telegram delivery error.
 
 Automated tests cover `retry_after`, exponential retry, duplicate updates, request authentication, size checks, and failure paths. Live failure notices are best-effort: if Telegram, Apps Script URL Fetch, or Apps Script itself is unavailable, the same failed service may prevent the notice from reaching the sender.
+
+Telegram's [`retry_after`](https://core.telegram.org/bots/api#responseparameters) is a minimum wait, never shortened. Waits of up to 10 seconds are honored in full while retry attempts remain. For longer waits or an exhausted attempt budget, that API call stops; a participant relay attempts one sender notice with the wait time. The message is not queued: after waiting, the participant sends it again and the bot reads the current mapping. This avoids holding a serverless execution for a long wait or later delivering through an old pairing.
 
 ## 12. Troubleshooting
 

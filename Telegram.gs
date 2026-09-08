@@ -38,8 +38,15 @@ function telegramApi_(bot, method, payload) {
     if (status >= 200 && status < 300 && body.ok) return body.result;
 
     var retryable = status === 429 || status >= 500;
+    var retryAfter = Number(body.parameters && body.parameters.retry_after || 0) * 1000;
+    if (retryable && retryAfter > 0 &&
+        (retryAfter > AM_CONFIG.TELEGRAM_MAX_RETRY_MS || attempt + 1 >= AM_CONFIG.TELEGRAM_MAX_ATTEMPTS)) {
+      // Stop rather than shortening Telegram's minimum wait or queueing an old route.
+      var retryError = new Error("Telegram " + method + " requires a later retry.");
+      retryError.retryAfterSeconds = Math.ceil(retryAfter / 1000);
+      throw retryError;
+    }
     if (retryable && attempt + 1 < AM_CONFIG.TELEGRAM_MAX_ATTEMPTS) {
-      var retryAfter = Number(body.parameters && body.parameters.retry_after || 0) * 1000;
       Utilities.sleep(Math.min(
         retryAfter || AM_CONFIG.TELEGRAM_RETRY_BASE_MS * Math.pow(2, attempt),
         AM_CONFIG.TELEGRAM_MAX_RETRY_MS

@@ -707,6 +707,47 @@ for (const [bot, targetRow, targetId, receivingBot] of [
   });
 }
 
+for (const [bot, targetRow, targetId, receivingBot] of [
+  ["mortal", 3, "20002", "angel"],
+  ["angel", 4, "30003", "mortal"]
+]) {
+  for (const invalidField of ["sender declaration", "target declaration", "target Devil tolerance"]) {
+    test(`${bot} bot blocks ${invalidField} errors until current Form data is corrected`, () => {
+      const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
+      const formRow = invalidField.startsWith("sender") ? 2 : targetRow;
+      const originalFormRow = liveFormSheet.getRange(formRow, 1, 1, 16).getValues();
+      const originalMappings = roster.getRange(2, 7, 3, 1).getValues();
+      const originalBotState = roster.getRange(2, 19, 3, 2).getValues();
+      const update = text => ({update_id: 904, message: {from: {id: 10001}, chat: {id: 10001, type: "private"}, text}});
+      roster.getRange(2, 7, 3, 1).setValues([["Bob [20002]"], ["Charlie [30003]"], ["Alice [10001]"]]);
+      roster.getRange(2, 19, 3, 2).setValues([["ready", "ready"], ["ready", "ready"], ["ready", "ready"]]);
+      try {
+        if (invalidField.endsWith("declaration")) liveFormSheet.getRange(formRow, 16).clearContent();
+        else liveFormSheet.getRange(formRow, 12, 1, 3).setValues([["Devil and Mortal", "9", "yes"]]);
+        const invalid = context.currentParticipantDirectory_().participants.find(p => p.rowNumber === formRow);
+        assert.ok(invalid.formIssues.length, "exercise a required Form error, not an advisory fit gap");
+        const mutations = roster.mutationCount;
+        for (const text of bot === "mortal" ? ["blocked message", "/start", "/mortal"] : ["blocked message", "/start"]) {
+          const blocked = captureParticipantUpdates(bot, [update(text)]);
+          assert.equal(blocked.relays.length, 0, `${text} must not bypass required Form validation`);
+          assert.equal(blocked.sent.length, 1, "only the sender receives a failure, not the partner");
+          assert.deepEqual(blocked.sent[0].slice(0, 2), [bot, "10001"]);
+          assert.match(blocked.sent[0][2], /@organiser/);
+          assert.equal(roster.mutationCount, mutations, "invalid Form data must not save bot-start state");
+        }
+        liveFormSheet.getRange(formRow, 1, 1, 16).setValues(originalFormRow);
+        const restored = captureParticipantUpdates(bot, [update("after correction")]);
+        assert.equal(restored.relays.length, 1);
+        assert.deepEqual(restored.relays[0].slice(0, 3), [bot, receivingBot, targetId]);
+      } finally {
+        liveFormSheet.getRange(formRow, 1, 1, 16).setValues(originalFormRow);
+        roster.getRange(2, 7, 3, 1).setValues(originalMappings);
+        roster.getRange(2, 19, 3, 2).setValues(originalBotState);
+      }
+    });
+  }
+}
+
 test("public health errors omit participant names and pairing diagnostics", () => {
   const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
   const originalMappings = roster.getRange(2, 7, 3, 1).getValues();
@@ -1079,7 +1120,11 @@ test("recipient not started sends one failure and no target traffic or state wri
   }
 });
 
-test("exhausted target-bot retries send one sender failure without changing state", () => {
+for (const [targetStatus, expectedAttempts, feedback] of [
+  [500, 3, /could not send/i],
+  [429, 1, /not sent.*wait at least 60 seconds/i]
+]) {
+test(`target-bot ${targetStatus} failure sends one sender notice without changing state`, () => {
   const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
   const originalMappings = roster.getRange(2, 7, 3, 1).getValues();
   const originalBotState = roster.getRange(2, 19, 3, 2).getValues();
@@ -1096,8 +1141,10 @@ test("exhausted target-bot retries send one sender failure without changing stat
     const target = String(url).includes("test-angel-token");
     calls.push({target, payload: options.payload});
     return {
-      getResponseCode: () => target ? 500 : 200,
-      getContentText: () => JSON.stringify(target ? {ok: false, description: "server busy"} : {ok: true, result: {message_id: 1}})
+      getResponseCode: () => target ? targetStatus : 200,
+      getContentText: () => JSON.stringify(target
+        ? {ok: false, description: "unavailable", parameters: targetStatus === 429 ? {retry_after: 60} : {}}
+        : {ok: true, result: {message_id: 1}})
     };
   };
   const mutations = roster.mutationCount;
@@ -1106,11 +1153,11 @@ test("exhausted target-bot retries send one sender failure without changing stat
       update_id: 832,
       message: {from: {id: 10001}, chat: {id: 10001, type: "private"}, text: "retry me"}
     });
-    assert.equal(calls.filter(call => call.target).length, 3, JSON.stringify(calls));
+    assert.equal(calls.filter(call => call.target).length, expectedAttempts, JSON.stringify(calls));
     const senderCalls = calls.filter(call => !call.target);
     assert.equal(senderCalls.length, 1);
     assert.equal(senderCalls[0].payload.chat_id, "10001");
-    assert.match(senderCalls[0].payload.text, /could not send/i);
+    assert.match(senderCalls[0].payload.text, feedback);
     assert.match(senderCalls[0].payload.text, /@helper_one or @helper_two/);
     assert.equal(roster.mutationCount, mutations);
   } finally {
@@ -1122,6 +1169,7 @@ test("exhausted target-bot retries send one sender failure without changing stat
     roster.getRange(2, 19, 3, 2).setValues(originalBotState);
   }
 });
+}
 
 test("a failed sender notice is attempted once and does not re-enter webhook feedback", () => {
   const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
@@ -1365,6 +1413,65 @@ test("Telegram API retries flood-control and server failures", () => {
   assert.deepEqual(sleeps, [500, 2000]);
 });
 
+for (const [retryAfter, failuresBefore] of [[11, 0], [60, 0], [2, 2]]) {
+  test(`Telegram ${retryAfter}-second flood wait stops when delay or attempts exceed the retry budget`, () => {
+    const originalFetch = context.UrlFetchApp.fetch;
+    const originalSleep = context.Utilities.sleep;
+    properties.set("ANGEL_BOT_TOKEN", "angel-test-token");
+    const sleeps = [];
+    let calls = 0;
+    context.UrlFetchApp.fetch = () => {
+      calls += 1;
+      const status = calls <= failuresBefore ? 500 : 429;
+      return {
+        getResponseCode: () => status,
+        getContentText: () => JSON.stringify({ok: false, description: "unavailable", parameters: status === 429 ? {retry_after: retryAfter} : {}})
+      };
+    };
+    context.Utilities.sleep = value => sleeps.push(value);
+    try {
+      assert.throws(() => context.telegramApi_("angel", "sendMessage", {chat_id: "10001", text: "hi"}), error => {
+        assert.equal(error.retryAfterSeconds, retryAfter);
+        return true;
+      });
+      assert.equal(calls, failuresBefore + 1, "do not repeat the rejected request before its minimum wait");
+      assert.deepEqual(sleeps, failuresBefore ? [500, 1000] : [], "do not occupy an execution with a truncated flood wait");
+    } finally {
+      context.UrlFetchApp.fetch = originalFetch;
+      context.Utilities.sleep = originalSleep;
+      properties.delete("ANGEL_BOT_TOKEN");
+    }
+  });
+}
+
+test("Telegram honors a ten-second flood wait before retrying", () => {
+  const originalFetch = context.UrlFetchApp.fetch;
+  const originalSleep = context.Utilities.sleep;
+  properties.set("ANGEL_BOT_TOKEN", "angel-test-token");
+  let calls = 0;
+  const sleeps = [];
+  context.UrlFetchApp.fetch = () => {
+    calls += 1;
+    const blocked = calls === 1;
+    return {
+      getResponseCode: () => blocked ? 429 : 200,
+      getContentText: () => JSON.stringify(blocked
+        ? {ok: false, parameters: {retry_after: 10}}
+        : {ok: true, result: {message_id: 10}})
+    };
+  };
+  context.Utilities.sleep = value => sleeps.push(value);
+  try {
+    assert.equal(context.telegramApi_("angel", "sendMessage", {}).message_id, 10);
+    assert.equal(calls, 2);
+    assert.deepEqual(sleeps, [10000]);
+  } finally {
+    context.UrlFetchApp.fetch = originalFetch;
+    context.Utilities.sleep = originalSleep;
+    properties.delete("ANGEL_BOT_TOKEN");
+  }
+});
+
 test("media larger than Telegram getFile limit fails before download", () => {
   const originalGetFile = context.telegramGetFile_;
   const originalFetch = context.UrlFetchApp.fetch;
@@ -1436,29 +1543,56 @@ test("dependency installs stay ignored at the root and in gateway", () => {
   assert.match(ignore, /^node_modules\/$/m);
 });
 
-test("admin binding captures the latest private start sender without exposing the ID", () => {
-  properties.delete("ADMIN_TELEGRAM_ID");
+for (const configuredId of ["", "not-a-numeric-id"]) {
+test(`admin binding rejects ${configuredId ? "invalid" : "missing"} verified ID without trusting queued starters`, () => {
+  if (configuredId) properties.set("ADMIN_TELEGRAM_ID", configuredId);
+  else properties.delete("ADMIN_TELEGRAM_ID");
   properties.set("ADMIN_BOT_TOKEN", "admin-test-token");
   const originalApi = context.telegramApi_;
   const originalDelete = context.telegramDeleteWebhook_;
   const deleted = [];
+  let calls = 0;
   context.telegramDeleteWebhook_ = (...args) => deleted.push(args);
-  context.telegramApi_ = (bot, method) => {
-    assert.equal(bot, "admin");
-    assert.equal(method, "getUpdates");
+  context.telegramApi_ = () => {
+    calls += 1;
     return [
-      {update_id: 1, message: {from: {id: 111}, chat: {id: 111, type: "private"}, text: "hello"}},
-      {update_id: 2, message: {from: {id: 222}, chat: {id: 222, type: "private"}, text: "/start@AdminBot"}}
+      {update_id: 1, message: {from: {id: 11111}, chat: {id: 11111, type: "private"}, text: "/start"}},
+      {update_id: 2, message: {from: {id: 22222}, chat: {id: 22222, type: "private"}, text: "/start@AdminBot"}}
     ];
   };
   try {
-    assert.equal(context.captureAdminTelegramId(), "Telegram organiser ID captured.");
+    assert.throws(() => context.captureAdminTelegramId(), /verified.*numeric Telegram ID/i);
+    assert.equal(properties.get("ADMIN_TELEGRAM_ID") || "", configuredId);
+    assert.equal(calls, 0);
+    assert.deepEqual(deleted, [], "validation must not remove an existing webhook");
   } finally {
     context.telegramApi_ = originalApi;
     context.telegramDeleteWebhook_ = originalDelete;
+    properties.delete("ADMIN_TELEGRAM_ID");
+    properties.delete("ADMIN_BOT_TOKEN");
   }
-  assert.deepEqual(deleted, [["admin", false]]);
-  assert.equal(properties.get("ADMIN_TELEGRAM_ID"), "222");
+});
+}
+
+test("explicit organizer ID stays unchanged and another starter cannot use admin commands", () => {
+  properties.set("ADMIN_TELEGRAM_ID", "11111");
+  properties.set("ADMIN_BOT_TOKEN", "admin-test-token");
+  const originalSend = context.telegramSendMessage_;
+  const sent = [];
+  context.telegramSendMessage_ = (...args) => sent.push(args);
+  try {
+    assert.doesNotMatch(context.captureAdminTelegramId(), /11111/);
+    for (const text of ["/start", "/list", "/reset 11111", "/announce hello"]) {
+      context.handleAdminUpdate_({message: {from: {id: 22222}, chat: {id: 22222, type: "private"}, text}});
+    }
+    assert.equal(properties.get("ADMIN_TELEGRAM_ID"), "11111");
+    assert.equal(sent.length, 4);
+    sent.forEach(entry => assert.deepEqual(entry, ["admin", "22222", "Not authorized."]));
+  } finally {
+    context.telegramSendMessage_ = originalSend;
+    properties.delete("ADMIN_TELEGRAM_ID");
+    properties.delete("ADMIN_BOT_TOKEN");
+  }
 });
 
 test("configuration validation identifies missing secrets without exposing values", () => {

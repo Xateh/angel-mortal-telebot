@@ -41,6 +41,7 @@ function resolveSafeRelayRoute_(participant, bot, byId) {
   var direction = resolveRelayDirection_(participant, bot);
   var target = byId[direction.targetId];
   if (!target) return null;
+  if ((participant.formIssues || []).length || (target.formIssues || []).length) return null;
   var currentParticipants = Object.keys(byId).map(function (id) { return byId[id]; });
   if (findParticipantByTelegramId_(target.telegramId, currentParticipants) !== target) return null;
   if (bot === "mortal" && target.angelId !== participant.personId) return null;
@@ -230,7 +231,9 @@ function handleParticipantUpdate_(bot, update) {
     relayTelegramMessage_(bot, direction.targetBot, target.telegramId, message);
   } catch (error) {
     console.error("Relay failed for update " + update.update_id + ": " + error.stack);
-    sendParticipantFailure_(bot, telegramId, "I could not send that message. Please try once more.");
+    sendParticipantFailure_(bot, telegramId, error.retryAfterSeconds
+      ? "This message was not sent. Please wait at least " + error.retryAfterSeconds + " seconds, then send it again."
+      : "I could not send that message. Please try once more.");
   }
 }
 
