@@ -41,6 +41,8 @@ function resolveSafeRelayRoute_(participant, bot, byId) {
   var direction = resolveRelayDirection_(participant, bot);
   var target = byId[direction.targetId];
   if (!target) return null;
+  var currentParticipants = Object.keys(byId).map(function (id) { return byId[id]; });
+  if (findParticipantByTelegramId_(target.telegramId, currentParticipants) !== target) return null;
   if (bot === "mortal" && target.angelId !== participant.personId) return null;
   if (bot === "angel" && target.mortalId !== participant.personId) return null;
   return {direction: direction, target: target};

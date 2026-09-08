@@ -185,7 +185,7 @@ Use only the isolated stack and controlled accounts. Never message production pa
 - Photo, sticker, video, voice, document, animation, and video-note relay work by cross-bot download/re-upload.
 - Temporarily blanking or corrupting one isolated `Mortal` selection blocks delivery; restoring the dropdown selection makes the next message use the restored route.
 - Replacing the whole controlled three-person derangement with the other valid three-person derangement between two messages sends only the second message to the giver's new current mortal. Require every row to return to `Ready` before sending it.
-- A duplicate controlled Telegram ID blocks both ambiguous senders. Test this last on a disposable stack, or clear the isolated synthetic data afterward.
+- A duplicate controlled Telegram ID blocks both ambiguous senders and delivery to that ID. `/start` on an ambiguous route must not save bot-start state or notify a partner. Resolving the duplicate makes the next message use the current unique route. Test this last on a disposable stack, or clear the isolated synthetic data afterward.
 - Temporarily replacing only the target bot token with a non-secret invalid value makes Telegram reject delivery immediately (normally `401` or `404`); the source bot attempts one support notice. Restore the real token immediately. The automated suite separately verifies all three attempts for retryable `429` and `5xx` failures.
 - Adding another synthetic Form response expands formula columns without a trigger; blank rows remain blank.
 - Worker `/healthz` returns `200`; a `/telegram` request without a valid key returns `403`; an upstream failure returns retryable `503`.
@@ -194,6 +194,8 @@ Use only the isolated stack and controlled accounts. Never message production pa
 Automated tests cover `retry_after`, exponential retry, duplicate updates, request authentication, size checks, and failure paths. Live failure notices are best-effort: if Telegram, Apps Script URL Fetch, or Apps Script itself is unavailable, the same failed service may prevent the notice from reaching the sender.
 
 ## 12. Troubleshooting
+
+Public Apps Script health errors are deliberately generic and do not include participant names or private diagnostic details. For organizer-only details, inspect `Pairing Issues` in the private roster or run `validateConfiguration` inside Apps Script.
 
 | Symptom | Likely cause | Action |
 | --- | --- | --- |

@@ -661,6 +661,92 @@ test("duplicate sender Telegram IDs cannot relay or write bot-start state", () =
   }
 });
 
+for (const [bot, targetRow, targetId, receivingBot] of [
+  ["mortal", 3, "20002", "angel"],
+  ["angel", 4, "30003", "mortal"]
+]) {
+  test(`${bot} bot blocks duplicate recipient IDs until the next current lookup is unique`, () => {
+    const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
+    const originalMappings = roster.getRange(2, 7, 3, 1).getValues();
+    const originalBotState = roster.getRange(2, 19, 3, 2).getValues();
+    const duplicate = liveFormSheet.getRange(targetRow, 1, 1, 16).getValues()[0];
+    duplicate[1] = "Duplicate recipient";
+    roster.getRange(2, 7, 3, 1).setValues([["Bob [20002]"], ["Charlie [30003]"], ["Alice [10001]"]]);
+    roster.getRange(2, 19, 3, 2).setValues([["ready", "ready"], ["ready", "ready"], ["ready", "ready"]]);
+    const update = text => ({update_id: 903, message: {from: {id: 10001}, chat: {id: 10001, type: "private"}, text}});
+    try {
+      const before = captureParticipantUpdates(bot, [update("before duplicate")]);
+      assert.equal(before.relays.length, 1);
+      assert.deepEqual(before.relays[0].slice(0, 3), [bot, receivingBot, targetId]);
+
+      liveFormSheet.getRange(5, 1, 1, 16).setValues([duplicate]);
+      roster.setDisplayedValue(5, 14, targetId);
+      roster.setDisplayedValue(5, 15, "form:spreadsheet-test-id:5");
+      const mutations = roster.mutationCount;
+      for (const text of bot === "mortal" ? ["blocked message", "/start", "/mortal"] : ["blocked message", "/start"]) {
+        const blocked = captureParticipantUpdates(bot, [update(text)]);
+        assert.equal(blocked.relays.length, 0, `${text} must not reach an ambiguous recipient`);
+        assert.equal(blocked.sent.length, 1, "send one failure to the sender, not a partner notification");
+        assert.deepEqual(blocked.sent[0].slice(0, 2), [bot, "10001"]);
+        assert.match(blocked.sent[0][2], /pairing.*updated/i);
+        assert.match(blocked.sent[0][2], /@organiser/);
+        assert.equal(roster.mutationCount, mutations, "do not register a bot start for an ambiguous route");
+      }
+
+      liveFormSheet.getRange(5, 1, 1, 16).clearContent();
+      roster.getRange(5, 14, 1, 2).clearContent();
+      const restored = captureParticipantUpdates(bot, [update("after duplicate resolved")]);
+      assert.equal(restored.relays.length, 1);
+      assert.deepEqual(restored.relays[0].slice(0, 3), [bot, receivingBot, targetId]);
+    } finally {
+      liveFormSheet.getRange(5, 1, 1, 16).clearContent();
+      roster.getRange(5, 14, 1, 2).clearContent();
+      roster.getRange(2, 7, 3, 1).setValues(originalMappings);
+      roster.getRange(2, 19, 3, 2).setValues(originalBotState);
+    }
+  });
+}
+
+test("public health errors omit participant names and pairing diagnostics", () => {
+  const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
+  const originalMappings = roster.getRange(2, 7, 3, 1).getValues();
+  roster.getRange(2, 7, 3, 1).clearContent();
+  try {
+    assert.throws(() => context.validateParticipants_(), /Alice:/, "organizer validation keeps details");
+    const response = JSON.parse(context.doGet().text);
+    assert.equal(response.ok, false);
+    assert.equal(response.service, "angel-mortal");
+    assert.ok(response.error);
+    assert.doesNotMatch(JSON.stringify(response), /Alice|Bob|Charlie|Choose a mortal|10001|20002|30003/);
+  } finally {
+    roster.getRange(2, 7, 3, 1).setValues(originalMappings);
+  }
+});
+
+test("public health errors omit private backend exception details", () => {
+  const originalOpen = context.SpreadsheetApp.openById;
+  context.SpreadsheetApp.openById = () => { throw new Error("private-resource-diagnostic"); };
+  try {
+    const response = JSON.parse(context.doGet().text);
+    assert.equal(response.ok, false);
+    assert.ok(response.error);
+    assert.doesNotMatch(JSON.stringify(response), /private-resource-diagnostic/);
+  } finally {
+    context.SpreadsheetApp.openById = originalOpen;
+  }
+});
+
+test("public health still reports aggregate readiness for a valid roster", () => {
+  const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
+  const originalMappings = roster.getRange(2, 7, 3, 1).getValues();
+  roster.getRange(2, 7, 3, 1).setValues([["Bob [20002]"], ["Charlie [30003]"], ["Alice [10001]"]]);
+  try {
+    assert.deepEqual(JSON.parse(context.doGet().text), {ok: true, service: "angel-mortal", participants: 3, registered: 3});
+  } finally {
+    roster.getRange(2, 7, 3, 1).setValues(originalMappings);
+  }
+});
+
 function assertInvalidMortalSelectionFailsClosed(selection) {
   const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
   const originalMappings = roster.getRange(2, 7, 3, 1).getValues();

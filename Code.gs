@@ -4,7 +4,7 @@ function doGet() {
     summary = validateParticipants_();
     return jsonOutput_({ok: true, service: "angel-mortal", participants: summary.total, registered: summary.registered});
   } catch (error) {
-    return jsonOutput_({ok: false, service: "angel-mortal", error: error.message});
+    return jsonOutput_({ok: false, service: "angel-mortal", error: "Participant roster is unavailable or needs review."});
   }
 }
 
