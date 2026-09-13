@@ -1,5 +1,22 @@
+var telegramCooldownFallback_ = {};
+
 function telegramApi_(bot, method, payload) {
   var token = getBotToken_(bot);
+  var chatId = payload && payload.chat_id;
+  var botCooldownKey = "telegram-cooldown:" + bot + ":*";
+  var cooldownKey = chatId === undefined ? botCooldownKey : "telegram-cooldown:" + bot + ":" + String(chatId);
+  var cache = CacheService.getScriptCache();
+  var expiresAt = Math.max(
+    Number(cache.get(botCooldownKey) || 0), Number(cache.get(cooldownKey) || 0),
+    telegramCooldownFallback_[botCooldownKey] || 0, telegramCooldownFallback_[cooldownKey] || 0
+  );
+  if (expiresAt > Date.now()) {
+    var cooldownError = new Error("Telegram " + method + " requires a later retry.");
+    cooldownError.retryAfterSeconds = Math.ceil((expiresAt - Date.now()) / 1000);
+    cooldownError.deliveryStatus = "rejected";
+    throw cooldownError;
+  }
+  var uncertain = false;
   for (var attempt = 0; attempt < AM_CONFIG.TELEGRAM_MAX_ATTEMPTS; attempt += 1) {
     var response;
     try {
@@ -9,8 +26,11 @@ function telegramApi_(bot, method, payload) {
         muteHttpExceptions: true
       });
     } catch (error) {
+      uncertain = true;
       if (attempt + 1 >= AM_CONFIG.TELEGRAM_MAX_ATTEMPTS) {
-        throw new Error("Telegram " + method + " request failed: " + error.message);
+        var requestError = new Error("Telegram " + method + " request outcome is unknown.");
+        requestError.deliveryStatus = "unknown";
+        throw requestError;
       }
       Utilities.sleep(Math.min(
         AM_CONFIG.TELEGRAM_RETRY_BASE_MS * Math.pow(2, attempt),
@@ -20,6 +40,7 @@ function telegramApi_(bot, method, payload) {
     }
 
     var status = response.getResponseCode();
+    if (status >= 500) uncertain = true;
     var bodyText = response.getContentText();
     var body;
     try {
@@ -32,7 +53,9 @@ function telegramApi_(bot, method, payload) {
         ));
         continue;
       }
-      throw new Error("Telegram " + method + " returned HTTP " + status + " with a non-JSON response.");
+      var parseError = new Error("Telegram " + method + " returned HTTP " + status + " with a non-JSON response.");
+      parseError.deliveryStatus = uncertain ? "unknown" : "rejected";
+      throw parseError;
     }
 
     if (status >= 200 && status < 300 && body.ok) return body.result;
@@ -44,6 +67,14 @@ function telegramApi_(bot, method, payload) {
       // Stop rather than shortening Telegram's minimum wait or queueing an old route.
       var retryError = new Error("Telegram " + method + " requires a later retry.");
       retryError.retryAfterSeconds = Math.ceil(retryAfter / 1000);
+      retryError.deliveryStatus = uncertain ? "unknown" : "rejected";
+      try {
+        cache.put(cooldownKey, String(Date.now() + retryAfter),
+          Math.min(retryError.retryAfterSeconds, 21600));
+      } catch (cacheError) {
+        // Cache is best-effort; still suppress a same-execution retry.
+        telegramCooldownFallback_[cooldownKey] = Date.now() + retryAfter;
+      }
       throw retryError;
     }
     if (retryable && attempt + 1 < AM_CONFIG.TELEGRAM_MAX_ATTEMPTS) {
@@ -53,43 +84,52 @@ function telegramApi_(bot, method, payload) {
       ));
       continue;
     }
-    throw new Error("Telegram " + method + " failed: " + (body.description || ("HTTP " + status)));
+    var apiError = new Error("Telegram " + method + " failed with HTTP " + status + ".");
+    apiError.deliveryStatus = uncertain ? "unknown" : "rejected";
+    throw apiError;
   }
-  throw new Error("Telegram " + method + " failed after retries.");
+  var exhausted = new Error("Telegram " + method + " outcome is unknown after retries.");
+  exhausted.deliveryStatus = "unknown";
+  throw exhausted;
 }
 
 function telegramSendMessage_(bot, chatId, text, options) {
   var payload = Object.assign({
     chat_id: String(chatId),
-    text: String(text).slice(0, AM_CONFIG.MAX_TELEGRAM_TEXT),
+    text: String(text),
     disable_web_page_preview: true
   }, options || {});
+  if (Array.from(String(payload.text)).length > AM_CONFIG.MAX_TELEGRAM_TEXT) {
+    var lengthError = new Error("Telegram message exceeds the text limit.");
+    lengthError.deliveryStatus = "rejected";
+    throw lengthError;
+  }
   return telegramApi_(bot, "sendMessage", payload);
 }
 
 function telegramSendLongMessage_(bot, chatId, text) {
+  var sent = 0;
+  var result;
   splitTelegramText_(String(text), AM_CONFIG.MAX_TELEGRAM_TEXT).forEach(function (part) {
-    telegramSendMessage_(bot, chatId, part);
+    try {
+      result = telegramSendMessage_(bot, chatId, part);
+      sent += 1;
+    } catch (error) {
+      if (sent) error.partialDelivery = true;
+      throw error;
+    }
   });
+  return result;
 }
 
 function splitTelegramText_(text, limit) {
-  if (text.length <= limit) {
-    return [text];
-  }
+  var characters = Array.from(String(text));
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("Invalid Telegram text limit.");
   var parts = [];
-  var remaining = text;
-  while (remaining.length > limit) {
-    var breakAt = remaining.lastIndexOf("\n", limit);
-    if (breakAt < Math.floor(limit * 0.5)) {
-      breakAt = limit;
-    }
-    parts.push(remaining.slice(0, breakAt));
-    remaining = remaining.slice(breakAt).replace(/^\n/, "");
+  for (var index = 0; index < characters.length; index += limit) {
+    parts.push(characters.slice(index, index + limit).join(""));
   }
-  if (remaining) {
-    parts.push(remaining);
-  }
+  if (!parts.length) parts.push("");
   return parts;
 }
 
@@ -121,10 +161,22 @@ function telegramDownloadFile_(bot, fileId, fileName) {
 function telegramSendBlob_(bot, chatId, method, field, blob, caption) {
   var payload = {chat_id: String(chatId)};
   payload[field] = blob;
-  if (caption) {
-    payload.caption = String(caption).slice(0, AM_CONFIG.MAX_CAPTION);
+  var characters = Array.from(String(caption || ""));
+  if (characters.length) payload.caption = characters.slice(0, AM_CONFIG.MAX_CAPTION).join("");
+  var result = telegramApi_(bot, method, payload);
+  if (characters.length > AM_CONFIG.MAX_CAPTION) {
+    var label = "Caption continued:\n";
+    var remaining = characters.slice(AM_CONFIG.MAX_CAPTION).join("");
+    try {
+      splitTelegramText_(remaining, AM_CONFIG.MAX_TELEGRAM_TEXT - label.length).forEach(function (part) {
+        telegramSendMessage_(bot, chatId, label + part);
+      });
+    } catch (error) {
+      error.partialDelivery = true;
+      throw error;
+    }
   }
-  return telegramApi_(bot, method, payload);
+  return result;
 }
 
 function telegramGetMe_(bot) {
@@ -143,7 +195,7 @@ function inspectWebhookStatus() {
       installed: !!info.url,
       pendingUpdates: Number(info.pending_update_count || 0),
       lastErrorAt: info.last_error_date ? new Date(info.last_error_date * 1000).toISOString() : "",
-      lastError: String(info.last_error_message || "").slice(0, 500)
+      lastError: safeDiagnostic_(info.last_error_message || "").slice(0, 500)
     };
     console.log(JSON.stringify(status));
     return status;
@@ -216,7 +268,7 @@ function resetWebhooksAndDropPendingUpdates() {
 function relayTelegramMessage_(sourceBot, targetBot, targetChatId, message) {
   var kind = findMessageKind_(message);
   if (kind === "text") {
-    return telegramSendMessage_(targetBot, targetChatId, message.text);
+    return telegramSendLongMessage_(targetBot, targetChatId, message.text);
   }
   var descriptor = mediaDescriptor_(kind, message);
   if (!descriptor) {

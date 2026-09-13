@@ -71,7 +71,7 @@ function registerLiveTestBotStart_(telegramId, bot) {
     markParticipantBotStarted_(participant, bot);
     return true;
   } catch (error) {
-    console.error("Could not register the live-test bot start: " + error.stack);
+    console.error("Could not register the live-test bot start: " + safeDiagnostic_(error));
     return false;
   }
 }
@@ -87,11 +87,17 @@ function handleLiveTestUpdate_(bot, update) {
         sendParticipantFailure_(bot, telegramId, "Safe test mode is working, but I could not save your bot registration.");
         return;
       }
-      telegramSendMessage_(bot, telegramId, "Welcome " + name + "! Safe test mode is active.");
-      if (command.name === "start") {
-        telegramSendMessage_(bot, telegramId, "Your " + bot + " bot registration is saved.");
+      try {
+        telegramSendMessage_(bot, telegramId, "Welcome " + name + "! Safe test mode is active.");
+        if (command.name === "start") {
+          telegramSendMessage_(bot, telegramId, "Your " + bot + " bot registration is saved.");
+        }
+        telegramSendMessage_(bot, telegramId, liveTestHelpText_(bot));
+      } catch (error) {
+        sendDeliveryFailure_(bot, telegramId, error, command.name === "start"
+          ? "Your safe-test bot registration was saved, but the welcome message"
+          : "The safe-test help message");
       }
-      telegramSendMessage_(bot, telegramId, liveTestHelpText_(bot));
       return;
     }
     telegramSendMessage_(bot, telegramId, liveTestHelpText_(bot));
@@ -100,10 +106,17 @@ function handleLiveTestUpdate_(bot, update) {
   var otherBot = participantBotLabels_(bot).otherBot;
   try {
     relayTelegramMessage_(bot, otherBot, telegramId, message);
+  } catch (error) {
+    console.error("Safe test relay failed for update " + update.update_id + ": " + safeDiagnostic_(error));
+    sendDeliveryFailure_(bot, telegramId, error, "The safe relay test message");
+    return;
+  }
+  try {
     telegramSendMessage_(bot, telegramId, "Test passed: the message was relayed through the other bot.");
   } catch (error) {
-    console.error("Safe test relay failed for update " + update.update_id + ": " + error.stack);
-    sendParticipantFailure_(bot, telegramId, "I could not complete the safe relay test. Please try once more.");
+    console.error("Safe test acknowledgement failed for update " + update.update_id + ": " + safeDiagnostic_(error));
+    sendParticipantFailure_(bot, telegramId,
+      "Test passed: the message was relayed through the other bot. I could not confirm this acknowledgement here. Check the other bot before repeating the test.");
   }
 }
 
@@ -117,7 +130,7 @@ function handleParticipantUpdate_(bot, update) {
     try {
       telegramApi_(bot, "leaveChat", {chat_id: String(message.chat.id)});
     } catch (ignored) {
-      console.warn("Could not leave non-private chat: " + ignored.message);
+      console.warn("Could not leave non-private chat: " + safeDiagnostic_(ignored));
     }
     return;
   }
@@ -145,7 +158,7 @@ function handleParticipantUpdate_(bot, update) {
         signup = findParticipantByTelegramId_(telegramId, readParticipants_());
       } catch (readError) {
         signupReadable = false;
-        console.error("Could not read participant signups: " + readError.stack);
+        console.error("Could not read participant signups: " + safeDiagnostic_(readError));
       }
       if (signup) {
         sendParticipantFailure_(bot, telegramId, "Welcome " + signup.name + "! Your signup is linked, but pairings are being updated. Please try again shortly.");
@@ -166,24 +179,39 @@ function handleParticipantUpdate_(bot, update) {
       sendParticipantWelcome_(bot, telegramId, null);
       return;
     }
+    var startRoute;
     try {
-      var startRoute = resolveSafeRelayRoute_(participant, bot, participants.byId);
-      if (!startRoute) {
-        sendParticipantFailure_(bot, telegramId, "Your pairing for this bot is still being updated. No bot registration was saved; please try /start again after the mapping is ready.");
-        return;
-      }
+      startRoute = resolveSafeRelayRoute_(participant, bot, participants.byId);
+    } catch (error) {
+      console.error("Participant route check failed for update " + update.update_id + ": " + safeDiagnostic_(error));
+      sendParticipantFailure_(bot, telegramId, "The pairing changed while I was checking it. Please send /start again.");
+      return;
+    }
+    if (!startRoute) {
+      sendParticipantFailure_(bot, telegramId, "Your pairing for this bot is still being updated. No bot registration was saved; please try /start again after the mapping is ready.");
+      return;
+    }
+    try {
       handleParticipantStart_(bot, telegramId, participant, participants.byId);
     } catch (error) {
-      console.error("Participant start failed for update " + update.update_id + ": " + error.stack);
-      sendParticipantFailure_(bot, telegramId, "The pairing changed while I was checking it. Please send /start again.");
+      console.error("Participant start delivery failed for update " + update.update_id + ": " + safeDiagnostic_(error));
+      if (error.registrationSaved) {
+        sendDeliveryFailure_(bot, telegramId, error, "Your bot registration was saved, but the welcome/profile message");
+      } else {
+        sendParticipantFailure_(bot, telegramId, "I could not save your bot registration. Please try /start again.");
+      }
     }
     return;
   }
 
   if (command && command.name === "help") {
-    sendParticipantWelcome_(bot, telegramId, participant);
-    if (!participant) return;
-    telegramSendMessage_(bot, telegramId, participantHelpText_(bot));
+    try {
+      sendParticipantWelcome_(bot, telegramId, participant);
+      if (!participant) return;
+      telegramSendMessage_(bot, telegramId, participantHelpText_(bot));
+    } catch (error) {
+      sendDeliveryFailure_(bot, telegramId, error, "The help message");
+    }
     return;
   }
 
@@ -203,7 +231,11 @@ function handleParticipantUpdate_(bot, update) {
           sendParticipantFailure_(bot, telegramId, "Your mortal pairing is still being updated. Please try again shortly.");
           return;
         }
-        sendMortalDetails_(bot, telegramId, participant, participants.byId);
+        try {
+          sendMortalDetails_(bot, telegramId, participant, participants.byId);
+        } catch (error) {
+          sendDeliveryFailure_(bot, telegramId, error, "Your mortal profile");
+        }
         return;
       case "angel":
         telegramSendMessage_(bot, telegramId, bot === "angel" ?
@@ -230,10 +262,8 @@ function handleParticipantUpdate_(bot, update) {
   try {
     relayTelegramMessage_(bot, direction.targetBot, target.telegramId, message);
   } catch (error) {
-    console.error("Relay failed for update " + update.update_id + ": " + error.stack);
-    sendParticipantFailure_(bot, telegramId, error.retryAfterSeconds
-      ? "This message was not sent. Please wait at least " + error.retryAfterSeconds + " seconds, then send it again."
-      : "I could not send that message. Please try once more.");
+    console.error("Relay failed for update " + update.update_id + ": " + safeDiagnostic_(error));
+    sendDeliveryFailure_(bot, telegramId, error, "This message");
   }
 }
 
@@ -273,30 +303,58 @@ function sendParticipantFailure_(bot, telegramId, message) {
   try {
     telegramSendMessage_(bot, telegramId, withOrganiserHelp_(message));
   } catch (error) {
-    console.error("Could not send participant failure notice: " + error.message);
+    console.error("Could not send participant failure notice: " + safeDiagnostic_(error));
   }
+}
+
+function sendDeliveryFailure_(bot, telegramId, error, subject) {
+  var message;
+  if (error.partialDelivery) {
+    message = subject + " was partly delivered. Remaining content may not have arrived. Please check with the organisers before resending.";
+  } else if (error.deliveryStatus === "unknown") {
+    message = subject + " delivery could not be confirmed. It may have arrived; please check with the organisers before resending.";
+  } else if (error.retryAfterSeconds) {
+    message = subject + " was not sent. Please wait at least " + error.retryAfterSeconds + " seconds before trying again.";
+  } else {
+    message = subject + " was not delivered. Please try once more.";
+  }
+  sendParticipantFailure_(bot, telegramId, message);
 }
 
 function handleParticipantStart_(bot, telegramId, participant, byId) {
   markParticipantBotStarted_(participant, bot);
-  if (bot === "mortal") {
-    telegramSendMessage_(bot, telegramId, "Welcome " + participant.name + "! Messages sent here are relayed anonymously to your mortal.");
-    telegramSendMessage_(bot, telegramId, "Your role for this pairing is " + participant.roleToMortal + ".");
-    sendMortalDetails_(bot, telegramId, participant, byId);
-  } else {
-    telegramSendMessage_(bot, telegramId, "Welcome " + participant.name + "! Messages sent here are relayed anonymously to your angel. Your angel's identity stays secret.");
+  var welcomeSent = false;
+  try {
+    if (bot === "mortal") {
+      telegramSendMessage_(bot, telegramId, "Welcome " + participant.name + "! Messages sent here are relayed anonymously to your mortal.");
+      welcomeSent = true;
+      telegramSendMessage_(bot, telegramId, "Your role for this pairing is " + participant.roleToMortal + ".");
+      sendMortalDetails_(bot, telegramId, participant, byId);
+    } else {
+      telegramSendMessage_(bot, telegramId, "Welcome " + participant.name + "! Messages sent here are relayed anonymously to your angel. Your angel's identity stays secret.");
+      welcomeSent = true;
+    }
+
+    var direction = resolveRelayDirection_(participant, bot);
+    var other = byId[direction.targetId];
+    var ready = other && other.telegramId && participantHasStartedBot_(other, direction.targetBot);
+    telegramSendMessage_(bot, telegramId, ready ?
+      "Your " + direction.targetLabel + " has joined the receiving bot. The relay is ready." :
+      "Your " + direction.targetLabel + " has not opened the receiving bot yet. I will notify you when they join.");
+
+    // Re-notify the current partner on /start. This intentionally follows the
+    // latest mapping even when an earlier pairing used the same participant.
+    try {
+      notifyPartnerOfBotStart_(participant, bot, byId);
+    } catch (error) {
+      console.error("Partner notification failed: " + safeDiagnostic_(error));
+      sendDeliveryFailure_(bot, telegramId, error, "Your bot registration is saved. The partner notification");
+    }
+  } catch (error) {
+    error.registrationSaved = true;
+    if (welcomeSent) error.partialDelivery = true;
+    throw error;
   }
-
-  var direction = resolveRelayDirection_(participant, bot);
-  var other = byId[direction.targetId];
-  var ready = other && other.telegramId && participantHasStartedBot_(other, direction.targetBot);
-  telegramSendMessage_(bot, telegramId, ready ?
-    "Your " + direction.targetLabel + " has joined the receiving bot. The relay is ready." :
-    "Your " + direction.targetLabel + " has not opened the receiving bot yet. I will notify you when they join.");
-
-  // Re-notify the current partner on /start. This intentionally follows the
-  // latest mapping even when an earlier pairing used the same participant.
-  notifyPartnerOfBotStart_(participant, bot, byId);
 }
 
 function notifyPartnerOfBotStart_(participant, bot, byId) {
@@ -304,7 +362,12 @@ function notifyPartnerOfBotStart_(participant, bot, byId) {
     var angel = byId[participant.angelId];
     if (angel && angel.telegramId && participantHasStartedBot_(angel, "mortal")) {
       telegramSendMessage_("mortal", angel.telegramId, "Your mortal " + participant.name + " has joined the Angel bot. You can message them now.");
-      telegramSendMessage_("mortal", angel.telegramId, mortalIntroText_(participant));
+      try {
+        telegramSendLongMessage_("mortal", angel.telegramId, mortalIntroText_(participant));
+      } catch (error) {
+        error.partialDelivery = true;
+        throw error;
+      }
     }
     return;
   }
@@ -342,7 +405,7 @@ function sendMortalDetails_(bot, telegramId, participant, byId) {
     sendParticipantFailure_(bot, telegramId, "Your mortal pairing is not configured yet.");
     return;
   }
-  telegramSendMessage_(bot, telegramId, "You are acting as " + participant.roleToMortal + " for this mortal.\n\n" + mortalIntroText_(mortal));
+  telegramSendLongMessage_(bot, telegramId, "You are acting as " + participant.roleToMortal + " for this mortal.\n\n" + mortalIntroText_(mortal));
 }
 
 function handleSelfDeregister_(telegramId, participant) {
@@ -354,7 +417,7 @@ function handleSelfDeregister_(telegramId, participant) {
     try {
       telegramSendMessage_(bot, telegramId, "Successfully deregistered. Use your code to register again.");
     } catch (error) {
-      console.warn("Deregister notice failed for " + bot + ": " + error.message);
+      console.warn("Deregister notice failed for " + bot + ": " + safeDiagnostic_(error));
     }
   });
 }

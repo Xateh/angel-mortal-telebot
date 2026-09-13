@@ -23,11 +23,27 @@ var FORM_HEADER_PREFIXES = Object.freeze({
   declaration: ["i have looked through and understood the rules"]
 });
 
+// Shared parser/formula whitespace contract. Free text loses edge whitespace only.
+var FORM_WHITESPACE_CODEPOINTS_ = Object.freeze([
+  9, 10, 11, 12, 13, 32, 133, 160, 5760, 8192, 8193, 8194, 8195,
+  8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279
+]);
+
+function formWhitespaceClass_(sheetFormula) {
+  return "[" + FORM_WHITESPACE_CODEPOINTS_.map(function (codepoint) {
+    return sheetFormula ? "\\x{" + codepoint.toString(16) + "}" : String.fromCharCode(codepoint);
+  }).join("") + "]";
+}
+
+function formText_(value) {
+  var space = formWhitespaceClass_(false);
+  return String(value == null ? "" : value).replace(new RegExp("^" + space + "+|" + space + "+$", "g"), "");
+}
+
 function canonicalFormText_(value) {
-  return String(value == null ? "" : value)
+  return formText_(value)
     .replace(/[\u2018\u2019]/g, "'")
-    .replace(/\s+/g, " ")
-    .trim()
+    .replace(new RegExp(formWhitespaceClass_(false) + "+", "g"), " ")
     .toLocaleLowerCase();
 }
 
@@ -47,14 +63,14 @@ function findFormColumn_(headers, prefixes, required) {
 function mapFormColumns_(headers) {
   var columns = {};
   Object.keys(FORM_HEADER_PREFIXES).forEach(function (field) {
-    var required = ["timestamp", "name", "room", "telegramId", "mode", "declaration"].indexOf(field) !== -1;
+    var required = ["timestamp", "name", "gender", "room", "telegramHandle", "telegramId", "year", "faculty", "interests", "specialRequirements", "genderPreference", "mode", "declaration"].indexOf(field) !== -1;
     columns[field] = findFormColumn_(headers, FORM_HEADER_PREFIXES[field], required);
   });
   return columns;
 }
 
 function formValue_(row, column) {
-  return column < 0 ? "" : String(row[column] == null ? "" : row[column]).trim();
+  return column < 0 ? "" : formText_(row[column]);
 }
 
 function parseFormMode_(value) {
@@ -89,7 +105,7 @@ function parseFormResponse_(row, sourceRow, columns) {
     gender: formValue_(row, columns.gender),
     room: formValue_(row, columns.room),
     telegramHandle: formValue_(row, columns.telegramHandle),
-    telegramId: formValue_(row, columns.telegramId).replace(/\s+/g, ""),
+    telegramId: formValue_(row, columns.telegramId).replace(new RegExp(formWhitespaceClass_(false), "g"), ""),
     year: formValue_(row, columns.year),
     faculty: formValue_(row, columns.faculty),
     interests: formValue_(row, columns.interests),
@@ -105,20 +121,28 @@ function parseFormResponse_(row, sourceRow, columns) {
   };
   if (!response.timestamp) response.issues.push("Missing timestamp");
   if (!response.name) response.issues.push("Missing name");
+  if (!response.gender) response.issues.push("Missing gender");
   if (!response.room) response.issues.push("Missing room");
+  if (!response.telegramHandle) response.issues.push("Missing Telegram handle");
   if (!/^\d{5,20}$/.test(response.telegramId)) response.issues.push("Telegram ID must contain 5-20 digits");
+  if (!response.year) response.issues.push("Missing year of study");
+  if (!response.faculty) response.issues.push("Missing faculty");
+  if (!response.interests) response.issues.push("Missing interests");
+  if (!response.specialRequirements) response.issues.push("Missing special requirements");
+  if (!response.genderPreference) response.issues.push("Missing gender preference");
   if (!response.mode) response.issues.push("Unknown Angel/Devil selection");
   if (!response.declaration) response.issues.push("Declaration not accepted");
   if (response.mode === "Devil") {
     if (!/^[1-5]$/.test(response.prankTolerance)) response.issues.push("Devil response needs prank tolerance 1-5");
     if (!response.roomEntry) response.issues.push("Devil response needs room-entry preference");
+    if (!response.boundaries) response.issues.push("Devil response needs boundaries");
   }
   response.status = response.issues.length ? "Review" : "Ready";
   return response;
 }
 
 function addDuplicateIssues_(responses, propertyName, label, normalizer) {
-  var groups = {};
+  var groups = Object.create(null);
   responses.forEach(function (response) {
     var value = normalizer(response[propertyName]);
     if (!value) return;

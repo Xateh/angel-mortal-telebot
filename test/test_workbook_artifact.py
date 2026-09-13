@@ -166,8 +166,7 @@ class EmptyWorkbookArtifactTests(unittest.TestCase):
             if column_number(reference) in FORM_SOURCE_COLUMNS:
                 self.assertIn("Form Responses 1", formula, reference)
             cached = cell_text(cells[reference], self.strings)
-            self.assertNotIn(cached, {"#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#N/A"}, reference)
-            self.assertFalse(PRIVATE_PATTERN.search(cached), reference)
+            self.assertEqual(cached, "", f"{reference} formula cache must be empty")
         for column in MANUAL_COLUMNS:
             reference = f"{chr(64 + column)}2"
             cell = cells.get(reference)
@@ -179,8 +178,15 @@ class EmptyWorkbookArtifactTests(unittest.TestCase):
         def formula(reference: str) -> str:
             return re.sub(r"_xlfn(?:\._xlws)?\.", "", formula_text(cells[reference]))
 
+        whitespace = "[" + "".join(
+            f"\\x{{{codepoint:x}}}" for codepoint in (
+                9, 10, 11, 12, 13, 32, 133, 160, 5760, *range(8192, 8203),
+                8232, 8233, 8239, 8287, 12288, 65279,
+            )
+        ) + "]"
+
         def edge_trim(source: str) -> str:
-            return f'REGEXREPLACE(TO_TEXT(\'Form Responses 1\'!{source}),"^\\s+|\\s+$","")'
+            return f'REGEXREPLACE(TO_TEXT(\'Form Responses 1\'!{source}),"^{whitespace}+|{whitespace}+$","")'
 
         expected_sources = {
             "A2": ["B2:B"],
@@ -199,9 +205,12 @@ class EmptyWorkbookArtifactTests(unittest.TestCase):
         self.assertNotIn("LOWER(TRIM(", formula("U2"))
         self.assertNotIn(edge_trim("A2:A"), formula("R2"))
         self.assertIn(
-            'REGEXREPLACE(TO_TEXT(\'Form Responses 1\'!F2:F),"\\s","")',
+            f'REGEXREPLACE(TO_TEXT(\'Form Responses 1\'!F2:F),"{whitespace}","")',
             formula("N2"),
         )
+
+        self.assertIn("SUMPRODUCT(N(EXACT($G$2:$G,participantKey)),N($A$2:$A<>\"\")", formula("K2"))
+        self.assertIn("Devil response needs boundaries", formula("U2"))
 
     def test_roster_has_no_literal_data_or_copied_formulas(self) -> None:
         for reference, cell in self.cells("Angel Mortal Roster").items():

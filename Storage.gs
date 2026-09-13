@@ -38,7 +38,7 @@ var LEGACY_ROSTER_HEADERS = Object.freeze([
 ]);
 
 function normalizedName_(name) {
-  return String(name || "").trim().toLocaleLowerCase();
+  return formText_(name).toLocaleLowerCase();
 }
 
 function participantKey_(participant) {
@@ -205,21 +205,19 @@ function readFormResponses_() {
 
 function readExistingRosterState_() {
   var sheet = getRosterSpreadsheet_().getSheetByName(AM_CONFIG.ROSTER_SHEET_NAME);
-  var state = {byPersonId: {}, byTelegramId: {}};
+  var state = {byPersonId: Object.create(null)};
   if (!sheet || sheet.getLastRow() < 2) return state;
   var layout = getRosterLayout_(sheet);
   var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, ROSTER_HEADERS.length).getDisplayValues();
   rows.forEach(function (row, index) {
     var item = {
       rowNumber: index + 2,
-      mortalSelection: String(row[layout.columns["Mortal"] - 1] || "").trim(),
+      mortalSelection: String(row[layout.columns["Mortal"] - 1] || ""),
       angelBotStartedAt: row[layout.columns["Angel Bot Started At"] - 1] || "",
       mortalBotStartedAt: row[layout.columns["Mortal Bot Started At"] - 1] || ""
     };
     var personId = String(row[layout.columns.PersonID - 1] || "").trim();
-    var telegramId = String(row[layout.columns["Telegram ID"] - 1] || "").trim();
     if (personId && !state.byPersonId[personId]) state.byPersonId[personId] = item;
-    if (telegramId && !state.byTelegramId[telegramId]) state.byTelegramId[telegramId] = item;
   });
   return state;
 }
@@ -229,7 +227,7 @@ function buildParticipantsFromForm_() {
   var existing = readExistingRosterState_();
   return readFormResponses_().map(function (response, index) {
     var personId = formParticipantId_(spreadsheetId, response.sourceRow);
-    var preserved = existing.byTelegramId[response.telegramId] || existing.byPersonId[personId] || {};
+    var preserved = existing.byPersonId[personId] || {};
     var participant = {
       rowNumber: index + 2,
       sourceRow: response.sourceRow,
@@ -242,7 +240,7 @@ function buildParticipantsFromForm_() {
       prankTolerance: response.prankTolerance,
       genderPreference: response.genderPreference,
       mortal: "",
-      mortalSelection: String(preserved.mortalSelection || "").trim(),
+      mortalSelection: String(preserved.mortalSelection || ""),
       mortalId: "",
       angelId: "",
       telegramId: response.telegramId,
@@ -263,7 +261,10 @@ function buildParticipantsFromForm_() {
 }
 
 function buildParticipantIndexes_(participants) {
-  var indexes = {byId: {}, byKey: {}, byTelegramId: {}, byName: {}};
+  var indexes = {
+    byId: Object.create(null), byKey: Object.create(null),
+    byTelegramId: Object.create(null), byName: Object.create(null)
+  };
   participants.forEach(function (participant) {
     indexes.byId[participant.personId] = participant;
     indexes.byKey[participant.key] = indexes.byKey[participant.key] || [];
@@ -286,7 +287,7 @@ function uniqueIndexedParticipant_(group) {
 }
 
 function resolveMortalSelection_(selection, indexes) {
-  selection = String(selection || "").trim();
+  selection = String(selection || "");
   return selection ? uniqueIndexedParticipant_(indexes.byKey[selection]) : null;
 }
 
@@ -358,7 +359,8 @@ function toleranceRating_(value) {
 }
 
 function assignmentFit_(giver, mortal) {
-  if (mortal.mode !== "Devil") return "READY · ANGEL";
+  if (mortal.mode === "Angel") return "READY · ANGEL";
+  if (mortal.mode !== "Devil") return "UNASSIGNED";
   var giverTolerance = toleranceRating_(giver.prankTolerance);
   var mortalTolerance = toleranceRating_(mortal.prankTolerance);
   if (mortalTolerance === null) return "INVALID · MORTAL TOLERANCE";
@@ -395,21 +397,23 @@ function rosterSpillFormulas_(personIdNamespace) {
   var timestamp = range.timestamp;
   var include = timestamp + "<>\"\"";
   var filter = function (value) { return "FILTER(" + value + "," + include + ")"; };
+  var whitespace = formWhitespaceClass_(true);
   var trimFormText = function (value) {
-    return "REGEXREPLACE(TO_TEXT(" + value + "),\"^\\s+|\\s+$\",\"\")";
+    return "REGEXREPLACE(TO_TEXT(" + value + ")," + formulaStringLiteral_("^" + whitespace + "+|" + whitespace + "+$") + ",\"\")";
   };
-  var telegramId = "REGEXREPLACE(TO_TEXT(" + range.telegramId + "),\"\\s\",\"\")";
-  var selectedCount = "COUNTIF($A$2:$A,mortal)";
-  var incomingCount = "COUNTIFS($G$2:$G,participantKey,$A$2:$A,\"<>\"&participantKey)";
-  var selectedIncomingCount = "COUNTIFS($G$2:$G,mortal,$A$2:$A,\"<>\"&mortal)";
-  var isDevil = "REGEXMATCH(LOWER(TO_TEXT(choice)),\"^devil and mortal\")";
-  var validMode = "REGEXMATCH(LOWER(TO_TEXT(choice)),\"^(angel|devil) and mortal\")";
+  var telegramId = "REGEXREPLACE(TO_TEXT(" + range.telegramId + ")," + formulaStringLiteral_(whitespace) + ",\"\")";
+  var selectedCount = "SUMPRODUCT(N(EXACT($A$2:$A,mortal)),N($A$2:$A<>\"\"))";
+  var incomingCount = "SUMPRODUCT(N(EXACT($G$2:$G,participantKey)),N($A$2:$A<>\"\"),N(NOT(EXACT($A$2:$A,participantKey))))";
+  var selectedIncomingCount = "SUMPRODUCT(N(EXACT($G$2:$G,mortal)),N($A$2:$A<>\"\"),N(NOT(EXACT($A$2:$A,mortal))))";
+  var normalizedMode = "REGEXREPLACE(LOWER(TO_TEXT(choice))," + formulaStringLiteral_(whitespace + "+") + ",\" \" )";
+  var isDevil = "REGEXMATCH(" + normalizedMode + ",\"^devil and mortal\")";
+  var validMode = "REGEXMATCH(" + normalizedMode + ",\"^(angel|devil) and mortal\")";
   var formulas = {};
 
-  formulas[1] = "=ARRAYFORMULA(IFNA(FILTER(" + trimFormText(range.name) + "&\" [\"&" + telegramId + "&\"]\"," + include + "),\"\"))";
+  formulas[1] = "=ARRAYFORMULA(IFNA(FILTER(" + trimFormText(range.name) + "&\" [\"&IF(" + telegramId + "=\"\",\"row \"&ROW(" + timestamp + ")," + telegramId + ")&\"]\"," + include + "),\"\"))";
   formulas[2] = "=ARRAYFORMULA(IFNA(" + filter(trimFormText(range.name)) + ",\"\"))";
   formulas[3] = "=ARRAYFORMULA(IFNA(" + filter(trimFormText(range.room)) + ",\"\"))";
-  formulas[4] = "=ARRAYFORMULA(IFNA(LET(choice," + filter(trimFormText(range.mode)) + ",IF(REGEXMATCH(LOWER(TO_TEXT(choice)),\"^devil and mortal\"),\"Devil\",IF(REGEXMATCH(LOWER(TO_TEXT(choice)),\"^angel and mortal\"),\"Angel\",\"\"))),\"\"))";
+  formulas[4] = "=ARRAYFORMULA(IFNA(LET(choice," + filter(trimFormText(range.mode)) + ",IF(" + isDevil + ",\"Devil\",IF(REGEXMATCH(" + normalizedMode + ",\"^angel and mortal\"),\"Angel\",\"\"))),\"\"))";
   formulas[5] = "=ARRAYFORMULA(IFNA(" + filter(trimFormText(range.prankTolerance)) + ",\"\"))";
   formulas[6] = "=ARRAYFORMULA(IFNA(" + filter(trimFormText(range.genderPreference)) + ",\"\"))";
   formulas[14] = "=ARRAYFORMULA(IFNA(" + filter(telegramId) + ",\"\"))";
@@ -417,14 +421,38 @@ function rosterSpillFormulas_(personIdNamespace) {
   formulas[16] = "=IFNA(MAP(" + [range.year, range.faculty, range.interests, range.specialRequirements, range.mode, range.prankTolerance, range.roomEntry, range.boundaries].map(trimFormText).map(filter).join(",") + ",LAMBDA(year,faculty,interests,requirements,choice,tolerance,roomEntry,boundaries,TEXTJOIN(CHAR(10),TRUE,IF(TEXTJOIN(\" · \",TRUE,year,faculty)=\"\",\"\",TEXTJOIN(\" · \",TRUE,year,faculty)),IF(interests=\"\",\"\",\"Interests: \"&interests),IF(requirements=\"\",\"\",\"Special requirements: \"&requirements),IF(" + isDevil + ",\"Mode: Devil and Mortal (welfare and pranks).\",\"Mode: Angel and Mortal (welfare only; no pranks).\"),IF(" + isDevil + ",IF(tolerance=\"\",\"\",\"Prank tolerance: \"&tolerance&\"/5\"),\"\"),IF(" + isDevil + ",IF(roomEntry=\"\",\"\",\"Room entry: \"&roomEntry),\"\"),IF(" + isDevil + ",IF(boundaries=\"\",\"\",\"Off limits: \"&boundaries),\"\")))),\"\")";
   formulas[17] = "=ARRAYFORMULA(IFNA(" + filter("ROW(" + timestamp + ")") + ",\"\"))";
   formulas[18] = "=ARRAYFORMULA(IFNA(" + filter(timestamp) + ",\"\"))";
-  formulas[21] = "=IFNA(MAP(" + [timestamp, trimFormText(range.name), trimFormText(range.room), telegramId, trimFormText(range.mode), trimFormText(range.declaration), trimFormText(range.prankTolerance), trimFormText(range.roomEntry)].map(filter).join(",") + ",LAMBDA(timestamp,name,room,telegramId,choice,declaration,tolerance,roomEntry,IF(timestamp=\"\",\"\",TEXTJOIN(\"; \",TRUE,IF(name=\"\",\"Missing name\",\"\"),IF(room=\"\",\"Missing room\",\"\"),IF(NOT(REGEXMATCH(TO_TEXT(telegramId),\"^\\d{5,20}$\")),\"Telegram ID must contain 5-20 digits\",\"\"),IF(NOT(" + validMode + "),\"Unknown Angel/Devil selection\",\"\"),IF(declaration=\"\",\"Declaration not accepted\",\"\"),IF(AND(" + isDevil + ",NOT(REGEXMATCH(TO_TEXT(tolerance),\"^[1-5]$\"))),\"Devil response needs prank tolerance 1-5\",\"\"),IF(AND(" + isDevil + ",roomEntry=\"\"),\"Devil response needs room-entry preference\",\"\"),IF(AND(telegramId<>\"\",SUMPRODUCT(N($N$2:$N=telegramId))>1),\"Duplicate Telegram ID in form responses\",\"\"),IF(AND(name<>\"\",SUMPRODUCT(N(LOWER($B$2:$B)=LOWER(name)))>1),\"Duplicate name in form responses\",\"\"))))),\"\")";
+  var validationSources = [timestamp, range.name, range.gender, range.room, range.telegramHandle,
+    range.telegramId, range.year, range.faculty, range.interests, range.specialRequirements,
+    range.genderPreference, range.mode, range.declaration, range.prankTolerance,
+    range.roomEntry, range.boundaries];
+  var validationArgs = "timestamp,name,gender,room,handle,telegramId,year,faculty,interests,requirements,genderPreference,choice,declaration,tolerance,roomEntry,boundaries";
+  var validationChecks = [
+    "IF(name=\"\",\"Missing name\",\"\")", "IF(gender=\"\",\"Missing gender\",\"\")",
+    "IF(room=\"\",\"Missing room\",\"\")", "IF(handle=\"\",\"Missing Telegram handle\",\"\")",
+    "IF(NOT(REGEXMATCH(TO_TEXT(telegramId),\"^\\d{5,20}$\")),\"Telegram ID must contain 5-20 digits\",\"\")",
+    "IF(year=\"\",\"Missing year of study\",\"\")", "IF(faculty=\"\",\"Missing faculty\",\"\")",
+    "IF(interests=\"\",\"Missing interests\",\"\")",
+    "IF(requirements=\"\",\"Missing special requirements\",\"\")",
+    "IF(genderPreference=\"\",\"Missing gender preference\",\"\")",
+    "IF(NOT(" + validMode + "),\"Unknown Angel/Devil selection\",\"\")",
+    "IF(declaration=\"\",\"Declaration not accepted\",\"\")",
+    "IF(AND(" + isDevil + ",NOT(REGEXMATCH(TO_TEXT(tolerance),\"^[1-5]$\"))),\"Devil response needs prank tolerance 1-5\",\"\")",
+    "IF(AND(" + isDevil + ",roomEntry=\"\"),\"Devil response needs room-entry preference\",\"\")",
+    "IF(AND(" + isDevil + ",boundaries=\"\"),\"Devil response needs boundaries\",\"\")",
+    "IF(AND(telegramId<>\"\",SUMPRODUCT(N(EXACT($N$2:$N,telegramId)))>1),\"Duplicate Telegram ID in form responses\",\"\")",
+    "IF(AND(name<>\"\",SUMPRODUCT(N(LOWER($B$2:$B)=LOWER(name)))>1),\"Duplicate name in form responses\",\"\")"
+  ];
+  formulas[21] = "=IFNA(MAP(" + validationSources.map(function (source, index) {
+    return filter(index === 0 ? source : index === 5 ? telegramId : trimFormText(source));
+  }).join(",") + ",LAMBDA(" + validationArgs + ",IF(timestamp=\"\",\"\",TEXTJOIN(\"; \",TRUE," +
+    validationChecks.join(",") + ")))),\"\")";
 
-  formulas[8] = "=MAP($A$2:$A,$G$2:$G,LAMBDA(participantKey,mortal,IF(participantKey=\"\",\"\",IF(mortal=\"\",\"\",IF(" + selectedCount + "<>1,\"\",XLOOKUP(mortal,$A$2:$A,$E$2:$E,\"\"))))))";
-  formulas[9] = "=MAP($A$2:$A,$G$2:$G,LAMBDA(participantKey,mortal,IF(participantKey=\"\",\"\",IF(mortal=\"\",\"\",IF(" + selectedCount + "<>1,\"\",XLOOKUP(mortal,$A$2:$A,$D$2:$D,\"\"))))))";
-  formulas[10] = "=MAP($A$2:$A,$G$2:$G,$E$2:$E,$H$2:$H,$I$2:$I,LAMBDA(participantKey,mortal,giverTolerance,mortalTolerance,role,IF(participantKey=\"\",\"\",IF(mortal=\"\",\"UNASSIGNED\",IF(" + selectedCount + "<>1,\"INVALID · MORTAL\",IF(mortal=participantKey,\"INVALID · SELF\",IF(role=\"Angel\",\"READY · ANGEL\",IF(role<>\"Devil\",\"INVALID · MORTAL MODE\",IF(NOT(REGEXMATCH(TO_TEXT(mortalTolerance),\"^[1-5]$\")),\"INVALID · MORTAL TOLERANCE\",IF(NOT(REGEXMATCH(TO_TEXT(giverTolerance),\"^[1-5]$\")),\"CHECK · DEVIL ?→\"&mortalTolerance,IF(ABS(VALUE(giverTolerance)-VALUE(mortalTolerance))<=1,\"GOOD · DEVIL \"&giverTolerance&\"→\"&mortalTolerance,IF(ABS(VALUE(giverTolerance)-VALUE(mortalTolerance))=2,\"CHECK · DEVIL \"&giverTolerance&\"→\"&mortalTolerance,\"MISMATCH · DEVIL \"&giverTolerance&\"→\"&mortalTolerance))))))))))))";
-  formulas[11] = "=MAP($A$2:$A,$D$2:$D,LAMBDA(participantKey,mode,IF(participantKey=\"\",\"\",IF(" + incomingCount + "<>1,\"\",INDEX(FILTER($A$2:$A,$G$2:$G=participantKey,$A$2:$A<>participantKey),1)&\" — \"&mode))))";
+  formulas[8] = "=MAP($A$2:$A,$G$2:$G,LAMBDA(participantKey,mortal,IF(participantKey=\"\",\"\",IF(mortal=\"\",\"\",IF(" + selectedCount + "<>1,\"\",IF(EXACT(mortal,participantKey),\"\",IFNA(INDEX(FILTER($E$2:$E,EXACT($A$2:$A,mortal)),1),\"\")))))))";
+  formulas[9] = "=MAP($A$2:$A,$G$2:$G,LAMBDA(participantKey,mortal,IF(participantKey=\"\",\"\",IF(mortal=\"\",\"\",IF(" + selectedCount + "<>1,\"\",IF(EXACT(mortal,participantKey),\"\",IFNA(INDEX(FILTER($D$2:$D,EXACT($A$2:$A,mortal)),1),\"\")))))))";
+  formulas[10] = "=MAP($A$2:$A,$G$2:$G,$E$2:$E,$H$2:$H,$I$2:$I,LAMBDA(participantKey,mortal,giverTolerance,mortalTolerance,role,IF(participantKey=\"\",\"\",IF(mortal=\"\",\"UNASSIGNED\",IF(" + selectedCount + "<>1,\"UNASSIGNED\",IF(EXACT(mortal,participantKey),\"UNASSIGNED\",IF(role=\"Angel\",\"READY · ANGEL\",IF(role<>\"Devil\",\"UNASSIGNED\",IF(NOT(REGEXMATCH(TO_TEXT(mortalTolerance),\"^[1-5]$\")),\"INVALID · MORTAL TOLERANCE\",IF(NOT(REGEXMATCH(TO_TEXT(giverTolerance),\"^[1-5]$\")),\"CHECK · DEVIL ?→\"&mortalTolerance,IF(ABS(VALUE(giverTolerance)-VALUE(mortalTolerance))<=1,\"GOOD · DEVIL \"&giverTolerance&\"→\"&mortalTolerance,IF(ABS(VALUE(giverTolerance)-VALUE(mortalTolerance))=2,\"CHECK · DEVIL \"&giverTolerance&\"→\"&mortalTolerance,\"MISMATCH · DEVIL \"&giverTolerance&\"→\"&mortalTolerance))))))))))))";
+  formulas[11] = "=MAP($A$2:$A,$D$2:$D,LAMBDA(participantKey,mode,IF(participantKey=\"\",\"\",IF(" + incomingCount + "<>1,\"\",INDEX(FILTER($A$2:$A,EXACT($G$2:$G,participantKey),$A$2:$A<>\"\",NOT(EXACT($A$2:$A,participantKey))),1)&\" — \"&mode))))";
   formulas[12] = "=MAP($A$2:$A,$M$2:$M,LAMBDA(participantKey,issues,IF(participantKey=\"\",\"\",IF(issues=\"\",\"Ready\",\"Review\"))))";
-  formulas[13] = "=MAP($A$2:$A,$G$2:$G,$U$2:$U,LAMBDA(participantKey,mortal,formIssues,IF(participantKey=\"\",\"\",TEXTJOIN(\"; \",TRUE,formIssues,IF(mortal=\"\",\"Choose a mortal\",\"\"),IF(AND(mortal<>\"\"," + selectedCount + "<>1),\"Selected mortal is not a current participant\",\"\"),IF(mortal=participantKey,\"A participant cannot be their own mortal\",\"\"),IF(AND(mortal<>\"\",mortal<>participantKey," + selectedCount + "=1," + selectedIncomingCount + ">1),\"Selected mortal is assigned to more than one giver\",\"\"),IF(" + incomingCount + "<>1,\"Appears as a mortal \"&" + incomingCount + "&\" times; expected exactly once\",\"\")))))";
+  formulas[13] = "=MAP($A$2:$A,$G$2:$G,$U$2:$U,LAMBDA(participantKey,mortal,formIssues,IF(participantKey=\"\",\"\",TEXTJOIN(\"; \",TRUE,formIssues,IF(mortal=\"\",\"Choose a mortal\",\"\"),IF(AND(mortal<>\"\"," + selectedCount + "<>1),\"Selected mortal is not a current participant\",\"\"),IF(EXACT(mortal,participantKey),\"A participant cannot be their own mortal\",\"\"),IF(AND(mortal<>\"\",NOT(EXACT(mortal,participantKey))," + selectedCount + "=1," + selectedIncomingCount + ">1),\"Selected mortal is assigned to more than one giver\",\"\"),IF(" + incomingCount + "<>1,\"Appears as a mortal \"&" + incomingCount + "&\" times; expected exactly once\",\"\")))))";
   return formulas;
 }
 
@@ -528,17 +556,30 @@ function findParticipantByTelegramId_(telegramId, participants) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+function findParticipantByPersonId_(personId, participants) {
+  personId = String(personId || "");
+  var matches = (participants || readParticipants_()).filter(function (participant) {
+    return participant.personId === personId;
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
 function findParticipantByCode_() {
   return null;
 }
 
 function findParticipantByIdentifier_(identifier, participants) {
   identifier = String(identifier || "").trim();
+  if (!identifier) return null;
   var list = participants || readParticipants_();
-  return list.find(function (participant) {
-    return participant.personId === identifier || participant.telegramId === identifier ||
-      participant.key === identifier || normalizedName_(participant.name) === normalizedName_(identifier);
-  }) || null;
+  var category = /^\d+$/.test(identifier) ? "telegramId" :
+    list.some(function (participant) { return participant.personId === identifier; }) ? "personId" :
+      list.some(function (participant) { return participant.key === identifier; }) ? "key" : "name";
+  var matches = list.filter(function (participant) {
+    return category === "name" ? normalizedName_(participant.name) === normalizedName_(identifier) :
+      participant[category] === identifier;
+  });
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function registerParticipant_(_code, telegramId) {
@@ -549,7 +590,13 @@ function registerParticipant_(_code, telegramId) {
 }
 
 function participantHasStartedBot_(participant, bot) {
-  return !!(bot === "angel" ? participant.angelBotStartedAt : participant.mortalBotStartedAt);
+  var startedAt = bot === "angel" ? participant.angelBotStartedAt : participant.mortalBotStartedAt;
+  return !!startedAt && !!participant.telegramId &&
+    getProperty_(participantStartBindingKey_(participant.personId, bot)) === participant.telegramId;
+}
+
+function participantStartBindingKey_(personId, bot) {
+  return "PARTICIPANT_START_" + bot + ":" + personId;
 }
 
 function markParticipantBotStarted_(participant, bot) {
@@ -557,16 +604,18 @@ function markParticipantBotStarted_(participant, bot) {
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    var current = findParticipantByIdentifier_(participant.personId, readParticipants_());
+    var current = findParticipantByPersonId_(participant.personId, readParticipants_());
     if (!current || !current.telegramId) throw new Error("Participant signup is missing.");
+    if (current.telegramId !== participant.telegramId) throw new Error("Participant account changed; reload the signup.");
     var propertyName = bot === "angel" ? "angelBotStartedAt" : "mortalBotStartedAt";
-    if (current[propertyName]) {
+    if (participantHasStartedBot_(current, bot)) {
       participant[propertyName] = current[propertyName];
       return false;
     }
     var startedAt = new Date();
     var column = bot === "angel" ? 19 : 20;
     getParticipantsSheet_().getRange(current.rowNumber, column).setValue(startedAt);
+    PropertiesService.getScriptProperties().setProperty(participantStartBindingKey_(current.personId, bot), current.telegramId);
     participant[propertyName] = startedAt;
     return true;
   } finally {
@@ -578,9 +627,12 @@ function deregisterParticipant_(participant) {
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    var current = findParticipantByIdentifier_(participant.personId, readParticipants_());
+    var current = findParticipantByPersonId_(participant.personId, readParticipants_());
     if (!current) throw new Error("Participant no longer exists.");
     getParticipantsSheet_().getRange(current.rowNumber, 19, 1, 2).clearContent();
+    AM_CONFIG.PARTICIPANT_BOTS.forEach(function (bot) {
+      PropertiesService.getScriptProperties().deleteProperty(participantStartBindingKey_(current.personId, bot));
+    });
     current.angelBotStartedAt = "";
     current.mortalBotStartedAt = "";
     return {participant: current, oldTelegramId: current.telegramId};

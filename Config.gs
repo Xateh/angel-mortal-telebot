@@ -52,6 +52,23 @@ function getProperty_(name) {
   return String(getScriptProperties_().getProperty(name) || "").trim();
 }
 
+function safeDiagnostic_(value) {
+  try {
+    var text = String(value && value.message || value || "");
+    ["ANGEL_BOT_TOKEN", "MORTAL_BOT_TOKEN", "ADMIN_BOT_TOKEN",
+      "ANGEL_WEBHOOK_KEY", "MORTAL_WEBHOOK_KEY", "ADMIN_WEBHOOK_KEY",
+      "WEBHOOK_GATEWAY_URL", "SPREADSHEET_ID", "FORM_RESPONSES_SPREADSHEET_ID"
+    ].forEach(function (name) {
+      var secret = getProperty_(name);
+      if (secret && secret.length >= 6) text = text.split(secret).join("[redacted]");
+    });
+    return text.replace(/https?:\/\/[^\s"'<>]+/g, "[redacted URL]")
+      .replace(/\bbot\d+:[A-Za-z0-9_-]+\b/g, "[redacted token]");
+  } catch (ignored) {
+    return "[diagnostic unavailable]";
+  }
+}
+
 function disableLiveTestMode() {
   var properties = getScriptProperties_();
   properties.deleteProperty(AM_CONFIG.TEST_MODE_ENABLED_PROPERTY);
@@ -148,7 +165,7 @@ function notifyUser_(title, message) {
       active.toast(String(message), String(title), 8);
     }
   } catch (error) {
-    console.log("UI notification unavailable: " + error.message);
+    console.log("UI notification unavailable: " + safeDiagnostic_(error));
   }
 }
 
@@ -187,16 +204,26 @@ function validateConfiguration_() {
     missing.push("ADMIN_TELEGRAM_ID");
   }
   var sheetMessage = "";
+  var sheetReadable = true;
   try {
-    var summary = validateParticipants_();
-    sheetMessage = summary.total + " participants; " + summary.registered + " registered.";
+    getParticipantsSheet_();
+    mapFormColumns_(readHeaderRow_(getFormResponseSheet_()));
+    var summary = syncParticipants_();
+    if (!summary || !Number.isSafeInteger(summary.total) || !Number.isSafeInteger(summary.registered) ||
+        !Number.isSafeInteger(summary.review) || summary.total < 0 || summary.registered < 0 ||
+        summary.registered > summary.total || summary.review < 0 || summary.review > summary.total) {
+      throw new Error("Invalid participant summary");
+    }
+    sheetMessage = summary.total + " participants; " + summary.registered +
+      " registered; " + summary.review + " need pairing review.";
   } catch (error) {
-    sheetMessage = "Participant sheet: " + error.message;
+    sheetReadable = false;
+    sheetMessage = "Participant sheet: " + safeDiagnostic_(error);
   }
   if (missing.length) {
     return {ok: false, message: "Missing Script Properties: " + missing.join(", ") + "\n\n" + sheetMessage};
   }
-  return {ok: true, message: "Bot configuration is present. " + sheetMessage};
+  return {ok: sheetReadable, message: "Bot configuration is present. " + sheetMessage};
 }
 
 function textOutput_(text) {

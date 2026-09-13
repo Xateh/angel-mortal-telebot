@@ -306,6 +306,8 @@ test("build injects one schema declaration before the Form builder", () => {
   assert.equal((bundle.match(/var FORM_SCHEMA\s*=/g) || []).length, 1);
   assert.ok(bundle.indexOf("var FORM_SCHEMA") < bundle.indexOf("// ===== FormSetup.gs ====="));
   assert.ok(bundle.indexOf("// ===== FormSetup.gs =====") < bundle.indexOf("// ===== Config.gs ====="));
+  assert.equal((bundle.match(/\/\/ ===== GuessFormSetup\.gs =====/g) || []).length, 1);
+  assert.ok(bundle.indexOf("// ===== GuessFormSetup.gs =====") > bundle.indexOf("// ===== FormSetup.gs ====="));
   assert.deepEqual(JSON.parse(bundle.match(/var FORM_SCHEMA = Object\.freeze\((\{.*\})\);/)[1]), loadSchema());
 });
 
@@ -314,7 +316,8 @@ test("Apps Script manifest keeps relay scopes and adds Forms access", () => {
   assert.deepEqual(manifest.oauthScopes, [
     "https://www.googleapis.com/auth/forms",
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/script.external_request"
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/script.scriptapp"
   ]);
 });
 

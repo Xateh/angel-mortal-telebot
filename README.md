@@ -1,8 +1,10 @@
 # Angel/Mortal Telegram Relay
 
-This repository builds an anonymous two-bot relay backed by a Google Form and Google Sheet. A giver uses the **Mortal bot** to message their assigned mortal. The mortal receives and replies through the **Angel bot**. The mortal never sees the giver's Telegram identity or whether the giver is acting as Angel or Devil.
+This repository builds an anonymous two-bot relay backed by a Google Form and Google Sheet. A giver uses the **Mortal bot** to message their assigned mortal. The mortal receives and replies through the **Angel bot**. Relay messages carry the bot's sender identity, not the giver's Telegram profile or forwarded-from identity, and the bot does not disclose the giver's Angel/Devil role. This is transport anonymity, not content anonymization: names, handles, faces, voices, filenames or document metadata included by a participant can still identify them.
 
 There is no registration code. Each participant is identified by the numeric Telegram ID submitted in the Form. Every incoming message reloads the current Form data and current `Mortal` mapping, so a remap takes effect on the next message. Invalid, stale, incomplete, or ambiguous mappings fail closed; they never fall back to an earlier recipient.
+
+Reading a mapping and sending to Telegram are not one atomic transaction. An edit after route validation cannot reliably cancel a message already in flight, especially during media transfer or retries. Coordinate a quiet period for mapping changes and require valid completed mappings before participants resume.
 
 Required Form errors on either person in the current pair also block relays, `/start` registration/partner notices, and mortal introductions until corrected. Devil-tolerance fit warnings remain advisory; unrelated unfinished pairs do not block a valid pair.
 
@@ -12,9 +14,11 @@ The documented default uses current free service tiers. It needs no paid plan, p
 
 Telegram sends each bot webhook to a small Cloudflare Worker. The Worker checks a per-bot secret, validates the update, and forwards it to an Apps Script web app. Apps Script reads the linked response Sheet, validates the current pairing, then calls Telegram. The Worker stores only its Apps Script URL and webhook keys. Apps Script stores bot credentials and configuration in Script Properties.
 
-The response Sheet contains `Angel Mortal Roster` with 21 columns. `Mortal` (column G) is the organizer's only manual pairing input. `Angel Bot Started At` (S) and `Mortal Bot Started At` (T) are bot-written state. Every other participant or pairing column has one spill formula in row 2. There is no form-submit or edit trigger.
+The response Sheet contains `Angel Mortal Roster` with 21 columns. `Mortal` (column G) is the organizer's only manual pairing input. `Angel Bot Started At` (S) and `Mortal Bot Started At` (T) are bot-written state. Every other participant or pairing column has one spill formula in row 2. The roster needs no form-submit or edit trigger. The optional guessing Form has a separate, opt-in hourly refresh timer described in section 16; it does not update roster rows.
 
 Keep `Form Responses 1` and roster rows append-only. Do not sort, delete, or insert underlying participant rows: doing so can misalign G, S, and T. Use filter views for temporary sorting. The `Mortal` dropdown, `Pairing Status`, issue text, and traffic-light formatting update from current responses and mappings. Google Sheets expands within its normal row capacity; if a spill reaches the last row, add rows with Sheets' native **Add rows** command and clear anything blocking the spill.
+
+Mappings are read afresh; registration is intentionally persistent. A private Script Property binds each PersonID/bot registration to the numeric Telegram ID that sent `/start`. Changing that ID leaves any old S/T timestamp as history, but it no longer grants readiness to the new account: the corrected account must send `/start` to each bot again. Old installations without bindings also require fresh `/start`; do not bulk-copy bindings from timestamps. This repository update does not migrate an existing production project.
 
 ## 2. Prerequisites
 
@@ -36,11 +40,13 @@ node --test test/form-schema.test.js
 npm run build
 npm --prefix gateway ci
 npm --prefix gateway test
-python -m unittest test.test_repository_safety
+python -m unittest test.test_repository_safety test.test_workbook_artifact
 python scripts/verify_repository.py
 ```
 
-All commands must pass. `npm run build` creates ignored `dist/Code.gs` from the source files and `config/form-schema.json`.
+All commands must pass. `npm test` includes core relay, delivery regressions, signup schema, and guessing Form tests. `npm run build` creates ignored `dist/Code.gs` from the source files and `config/form-schema.json`. These local mocks and structural checks do not establish native Google Sheets recalculation or live Telegram delivery; the isolated checklist below is a separate verification step.
+
+`templates/angel-mortal-empty.xlsx` is a participant-free reference template for Google Sheets, not an Excel-compatible calculation model. Its formulas use Google Sheets functions. The reproducible setup below generates the native Form and roster directly from the source scripts; do not substitute an Excel recalculation/export that replaces formulas or saves participant/error caches. Verify formula results in an isolated Google Sheet before adopting a revised formula build.
 
 Before a release scan, create ignored `.private-denylist` containing one private identifier per line. Include your real handles, IDs, private URLs, and resource names; do not publish example entries. Then run:
 
@@ -58,7 +64,7 @@ Release mode rejects a missing, empty, unreadable, or tracked denylist.
 2. In **Project Settings**, enable **Show `appsscript.json` manifest file in editor**.
 3. Replace the default `Code.gs` content with all of the generated `dist/Code.gs` content.
 4. Replace the manifest with this repository's `appsscript.json` content. Save both files.
-5. Select `createEmptyAngelMortalStack` and run it once. Review the requested Forms, Sheets, and external-request scopes, then authorize only if they match the manifest.
+5. Select `createEmptyAngelMortalStack` and run it once. Review the requested Forms, Sheets, external-request, and trigger-management scopes, then authorize only if they match the manifest. The trigger scope supports the optional guessing timer; setup itself installs no timer.
 6. The function creates a published Form, links it to a new response spreadsheet, creates `Angel Mortal Roster`, and stores the new spreadsheet IDs in Script Properties. It returns the new Form and Sheet identifiers and URLs. Keep them private. If the editor does not display the return value, open the two newly created files by title from your own Google Drive.
 7. Run `setupProject` once. This reapplies the roster setup and creates missing `ANGEL_WEBHOOK_KEY`, `MORTAL_WEBHOOK_KEY`, and `ADMIN_WEBHOOK_KEY` Script Properties.
 
@@ -171,7 +177,7 @@ The code requests `max_connections=10` per bot. The normal two-bot setup can the
 
 Use synthetic names and only Telegram accounts you control.
 
-1. Submit at least three Form responses, including one Angel choice and one Devil choice. Each response needs a unique numeric Telegram ID. Three controlled accounts allow a valid one-to-one remap test.
+1. Submit two controlled Form responses, including one Angel choice and one Devil choice. Each response needs a unique numeric Telegram ID. Two accounts are enough for reciprocal relay and invalid/restore tests; a third controlled account is optional for a second valid one-to-one derangement.
 2. Wait for the spill formulas to populate one roster row per response. No trigger or manual refresh is needed.
 3. In column G, choose each participant's mortal from the native dropdown. Build an exact one-to-one derangement: everyone selects one different person, everyone appears exactly once as a mortal, and no selection is blank, stale, duplicated, or self-directed.
 4. Confirm every `Pairing Status` is `Ready`. Amber Devil-tolerance gaps are advisory; red structural/form issues must be fixed.
@@ -185,10 +191,10 @@ Use only the isolated stack and controlled accounts. Never message production pa
 - `/start` on both bots shows the correct role/direction and bot readiness.
 - The giver's Mortal-bot introduction identifies the mortal and approved profile details.
 - Text sent to the Mortal bot arrives through the Angel bot; the reply sent to the Angel bot arrives through the Mortal bot.
-- The mortal never sees the giver's Telegram profile, username, or Angel/Devil identity.
+- Telegram shows the receiving bot as sender, without a forwarded-from link to the giver or an automatically disclosed Angel/Devil role. Use anonymous synthetic content; the relay does not remove identities embedded in the message or file.
 - Photo, sticker, video, voice, document, animation, and video-note relay work by cross-bot download/re-upload.
 - Temporarily blanking or corrupting one isolated `Mortal` selection blocks delivery; restoring the dropdown selection makes the next message use the restored route.
-- Replacing the whole controlled three-person derangement with the other valid three-person derangement between two messages sends only the second message to the giver's new current mortal. Require every row to return to `Ready` before sending it.
+- If three controlled accounts are available, replace the whole three-person derangement with the other valid three-person derangement between two messages. Only the second message goes to the giver's new current mortal. Require every row to return to `Ready` before sending it. With two accounts, record this live remapping case as not exercised; the automated suite covers current-route changes.
 - A duplicate controlled Telegram ID blocks both ambiguous senders and delivery to that ID. `/start` on an ambiguous route must not save bot-start state or notify a partner. Resolving the duplicate makes the next message use the current unique route. Test this last on a disposable stack, or clear the isolated synthetic data afterward.
 - Temporarily replacing only the target bot token with a non-secret invalid value makes Telegram reject delivery immediately (normally `401` or `404`); the source bot attempts one support notice. Restore the real token immediately. The automated suite separately verifies all three attempts for retryable `429` and `5xx` failures.
 - Adding another synthetic Form response expands formula columns without a trigger; blank rows remain blank.
@@ -197,7 +203,9 @@ Use only the isolated stack and controlled accounts. Never message production pa
 
 Automated tests cover `retry_after`, exponential retry, duplicate updates, request authentication, size checks, and failure paths. Live failure notices are best-effort: if Telegram, Apps Script URL Fetch, or Apps Script itself is unavailable, the same failed service may prevent the notice from reaching the sender.
 
-Telegram's [`retry_after`](https://core.telegram.org/bots/api#responseparameters) is a minimum wait, never shortened. Waits of up to 10 seconds are honored in full while retry attempts remain. For longer waits or an exhausted attempt budget, that API call stops; a participant relay attempts one sender notice with the wait time. The message is not queued: after waiting, the participant sends it again and the bot reads the current mapping. This avoids holding a serverless execution for a long wait or later delivering through an old pairing.
+Telegram's [`retry_after`](https://core.telegram.org/bots/api#responseparameters) is a minimum wait, never shortened. Waits of up to 10 seconds are honored in full while retry attempts remain. For longer waits or an exhausted attempt budget, that API call stops and caches a per-bot/chat cooldown. A source-channel notice may be attempted only if that source channel is not itself cooling down. If Telegram blocks that same channel, immediate failure feedback cannot be guaranteed. The message is not queued: wait before sending again and the bot reads the current mapping.
+
+Text and long introductions are split without dropping Unicode characters. Long captions continue as separate messages; failure after some parts arrive is reported as partial delivery. A timeout or server error can mean Telegram accepted the message but the reply was lost: feedback says delivery is unconfirmed, not definitely unsent. Check before resending. Retries and cache-based duplicate suppression are best-effort, not exactly-once delivery; cache eviction or ambiguous network outcomes can still produce duplicates. These caches are not a durable queue.
 
 ## 12. Troubleshooting
 
@@ -208,9 +216,9 @@ Public Apps Script health errors are deliberately generic and do not include par
 | “I could not match your Telegram ID…” | ID absent, mistyped, or duplicated in Form responses | Compare the sender's numeric Telegram ID with exactly one current response; resolve duplicates without reordering rows. |
 | “participant list” or Sheet-read failure | Wrong spreadsheet properties, deleted/renamed tab, missing owner access, or Google quota/outage | Restore the generated IDs and `Form Responses 1`; verify the deploying owner can open the Sheet; inspect Apps Script executions. |
 | “pairing … being updated” / message not sent | Blank, self, duplicate, stale, or inconsistent `Mortal` selection | Use current dropdown keys; require every row `Ready`; retry after formulas settle. |
-| “has not opened the receiving bot” | Target has not sent `/start` to the bot that receives this direction | Mortal starts Angel bot; giver starts Mortal bot; then retry. |
+| “has not opened the receiving bot” | Target has not sent `/start` to the bot that receives this direction, or their Telegram ID was corrected | Mortal starts Angel bot; giver starts Mortal bot; then retry. A historic S/T timestamp alone is insufficient. |
 | “I could not send that message” | Telegram 429/5xx, bad token, timeout, unsupported media, or file limit | Inspect Apps Script execution; obey `retry_after`; restore token; retry once with smaller supported media. |
-| “I couldn't process that message” | Top-level Apps Script failure | Inspect Apps Script execution and `LAST_WEBHOOK_STATUS`; fix the current cause before retrying. |
+| Delivery or processing “could not be confirmed” | Timeout, server failure, or top-level failure with uncertain outcome | Check whether it arrived before resending; inspect Apps Script execution and `LAST_WEBHOOK_STATUS`. |
 | Worker `403` | Missing/wrong bot or webhook key | Match Apps Script and Worker key values, then run `setupWebhooks` again. Never print the key. |
 | Worker `413` | Webhook body exceeds the 1 MiB gateway cap | Inspect the caller; normal Telegram media updates contain metadata, not file bytes. Do not raise the cap without review. |
 | Worker `503` | Missing Worker secret, Apps Script rejection, timeout, deployment access, or quota failure | Check secret names, `/exec` access, Worker logs, Apps Script executions, and webhook status. The Worker stops waiting after 55 seconds. |
@@ -235,6 +243,8 @@ Checked **4 September 2026**. These are provider limits, not guaranteed relay-me
 Source: [Apps Script quotas](https://developers.google.com/apps-script/guides/services/quotas).
 
 Normal text relay commonly uses one Apps Script URL Fetch send. Media commonly uses `getFile`, a download, and a cross-bot upload/send. Retries, `/start` responses, partner notices, and failure feedback add calls. Apps Script allows six minutes, but the Worker's 55-second upstream timeout is this synchronous gateway's practical ceiling.
+
+Current-account readiness also reads private Script Properties; each successful first start writes a binding. Long messages/captions can produce multiple outgoing calls. The optional guessing timer adds Form/Sheet reads even when no choices change. These share the owner's quotas with other scripts, so the URL Fetch allowance alone is not a reliable message-capacity estimate.
 
 ### Cloudflare Workers Free
 
@@ -284,7 +294,7 @@ npx wrangler secret delete ADMIN_WEBHOOK_KEY --name $workerName
 Skip the Admin-secret command if it was never set. Each `secret delete` creates and deploys a new Worker version.
 
 5. Delete the isolated Form and Sheet, or delete all Form responses and clear synthetic rows only in that isolated stack. If retaining the empty stack, clear G/S/T and confirm the roster returns to zero participants.
-6. If retaining the isolated Apps Script project, delete its isolated Script Properties: spreadsheet IDs and sheet name; bot tokens and usernames; webhook keys; Worker URL; support handles; Admin fields; and all test-mode fields. If the project is no longer needed, delete the entire isolated Apps Script project instead.
+6. If retaining the isolated Apps Script project, delete its isolated Script Properties: spreadsheet IDs and sheet name; bot tokens and usernames; webhook keys; Worker URL; support handles; Admin fields; all test-mode fields; and its `PARTICIPANT_START_` account bindings. Remove optional guessing triggers before deleting their six `GUESS_` properties. If the project is no longer needed, delete the entire isolated Apps Script project instead.
 7. From the repository root, rerun the release-mode repository and history scan while the complete ignored `.private-denylist` is still present. Confirm it passes and that no production resource or participant was accessed or changed.
 8. Only after that final release scan, delete `.private-denylist` and any local `.env`, `.dev.vars`, `.clasp.json`, `.wrangler`, logs, exports, snapshots, or private verification files. They are ignored but still sensitive.
 
@@ -297,3 +307,58 @@ If a bot token leaks, revoke it in BotFather, replace the Script Property, and r
 If any secret or private participant value is committed, deletion from the latest file is insufficient. Revoke or rotate it, remove it from every reachable Git history reference, rerun release-mode scanning, and only then continue.
 
 Official deployment references: [Apps Script web apps](https://developers.google.com/apps-script/guides/web), [Apps Script deployments](https://developers.google.com/apps-script/concepts/deployments), [Forms publication changes](https://developers.google.com/workspace/forms/api/guides/api-changes-to-google-forms), [publishing Forms](https://developers.google.com/workspace/forms/api/guides/publish-form), [Wrangler Worker commands](https://developers.cloudflare.com/workers/wrangler/commands/workers/), [Wrangler secrets](https://developers.cloudflare.com/workers/configuration/secrets/), and [Wrangler v4 migration](https://developers.cloudflare.com/workers/wrangler/migration/update-v3-to-v4/).
+
+## 16. Optional conclusion guessing Form
+
+This is a separate organizer-run setup. It does not replace the signup Form, change bot routing, create an answer key, grade guesses, reveal identities, or send messages. The repository contains no participant options or answers.
+
+### Create and populate
+
+1. Use a new isolated stack first. Finish the 21-column roster and require every participant to be `Ready`; no unresolved pairing or required Form errors may remain.
+2. Run `createGuessingForm` once from the Apps Script editor. It creates a new unpublished, closed draft with a required participant question and separate required Angel/Devil guess dropdowns. An empty draft contains only non-person placeholders. It does not connect a response spreadsheet.
+3. The function stores `GUESS_FORM_ID`, `GUESS_PERSON_ITEM_ID`, `GUESS_ANGEL_ITEM_ID`, `GUESS_DEVIL_ITEM_ID`, `GUESS_ANGEL_SECTION_ID`, and `GUESS_DEVIL_SECTION_ID` in private Script Properties. Never paste their values into this repository. Repeating setup reuses the configured Form; it does not rebuild it.
+4. Run `refreshGuessingFormOptions`. A successful result reports whether choices changed and the three list counts. Refresh sorts copies by name using English, case-insensitive ordering, then room and exact PersonID; labels preserve the original `name — room` spelling. Roster rows are never sorted. Blank/duplicate IDs, ambiguous labels, unsupported modes and unresolved pairings stop the refresh before choice changes.
+5. Check the draft in preview: selecting a participant goes to the section for the mode they receive. Candidate lists use the role each giver performs for their assigned mortal, not the giver's own requested mode. Both guess sections finish with Submit. An unused role displays `No candidates available` only in its unreachable section.
+6. Choose the response destination and access/settings in the Form editor. Before sharing, separately verify email-collection mode, response editing, one-response-per-account, quiz/results visibility, publication, accepting responses, and responder access. The boolean email-collection API does not prove Google's exact verified-email mode. Publish only when the organizer approves; verify the intended signed-out or signed-in responder experience.
+
+Creation failures may leave a partial draft. Inspect only the new files and saved guessing properties in your private Apps Script project; do not clear properties and rerun blindly. A missing/deleted/mistyped configured item stops refresh instead of silently creating a replacement. Keep the generated three questions and two section breaks in their original order, with Devil finishing at Submit; changed page layout or extra items stop refresh before any choice writes. Titles and response/access settings can be edited without recreating items.
+
+### Refresh and preservation
+
+Manual `refreshGuessingFormOptions` is the default. Repeating it with unchanged choices performs no choice writes. It addresses questions/sections by stored IDs and preserves responses, titles, settings, destination and publication. An unexpectedly empty roster stops refresh; it does not erase current options.
+
+Refresh serializes this script's own runs with a lock. Google Forms updates are separate API calls, not a transaction: a mid-refresh failure attempts to restore the previous choices and reports whether restoration failed. It cannot lock human editors or submissions already in progress. Close responses while changing an event's roster/options, refresh, inspect every branch, then reopen only when appropriate. Do not change names/rooms once guessing has started without deciding how existing labels and answers will be reconciled.
+
+### Optional hourly refresh
+
+No timer is installed by signup setup, guessing creation, participant commands or webhook processing.
+
+- To opt in, run `installGuessingFormRefreshTrigger` as the one designated organizer. It creates one hourly trigger for `refreshGuessingFormOptions`; repeated calls by the same owner do not add another.
+- The manifest includes `https://www.googleapis.com/auth/script.scriptapp` for programmatic trigger management. Review that additional scope before authorizing the new build; authorizing the scope is distinct from installing a timer. No live authorization is implied by copying repository files.
+- Triggers run under their creator's account and timing is approximate, not an immediate update on signup. Monitor that owner's Apps Script Executions and failure notices. Another owner can install another trigger; the script only lists/manages the current user's project triggers.
+- Run `removeGuessingFormRefreshTrigger` as that owner before freezing or closing the event. It removes only this handler's triggers and preserves unrelated triggers. Each other owner must remove their own matching trigger.
+
+Official API references: [unpublished Form creation](https://developers.google.com/apps-script/reference/forms/form-app#create(String,Boolean)), [choice navigation](https://developers.google.com/apps-script/reference/forms/choice), [hourly trigger](https://developers.google.com/apps-script/reference/script/clock-trigger-builder#everyHours(Integer)), and [trigger permissions and ownership](https://developers.google.com/apps-script/reference/script/script-app).
+
+### Scoring and participant identity: separate decisions
+
+Choice population is not scoring. A scoring system needs an explicitly frozen/versioned answer key, an agreed cutoff, and a rule for which valid submission counts. It must not recompute historical correctness from today's live mapping.
+
+The inspected prototype's lookup-and-compare approach needs these guards before reuse:
+
+| Case | Required treatment |
+| --- | --- |
+| Known valid guess equals frozen actual giver | Correct |
+| Known valid guess differs from frozen actual giver | Incorrect |
+| Blank guess and blank actual, missing lookup, stale label, ambiguous name, or unknown participant | Review, never accidental Correct |
+| Multiple submissions with equal timestamps | Deterministic tie-breaker, such as a stable response ID or agreed source-row order |
+| Mapping changed after the guess | Evaluate against the approved answer-key version/cutoff |
+| Google account submits another participant's name | Verify ownership under the organizer's agreed policy; a dropdown selection is not authentication |
+
+Verified email and one response per Google account do not establish which participant name belongs to that account. Response editing is also separate from a new submission. These identity and scoring policies are intentionally not implemented here. Hidden tabs are not an access-control boundary: keep any future answer key and results private, do not enable response summaries or automatic reveal, and do not export them into Git.
+
+### Isolated verification and retirement
+
+Run the automated suites from section 3, then (only with approval for a new isolated test) check alphabetical options, correct branches/candidate roles, repeated no-op refresh, settings/response preservation, and a controlled mid-write failure. Local mocks do not prove native concurrent-responder behavior.
+
+When retiring the guessing Form, remove its optional timer first, close/unpublish it in the editor, and retain or delete its private responses under the organizer's policy. Never delete the signup Form or production Sheet as part of guessing cleanup. If deleting the isolated stack, also remove its six `GUESS_*` properties. Include all private guessing resource identifiers in the ignored release denylist before cleanup.

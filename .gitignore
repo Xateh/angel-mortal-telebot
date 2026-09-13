@@ -6,7 +6,8 @@ node_modules/
 .private-denylist
 .clasp.json
 .wrangler/
-.dev.vars
+.dev.vars*
+exports/
 credentials*.json
 service-account*.json
 dist/

@@ -51,8 +51,12 @@ function handleAdminUpdate_(update) {
         telegramSendMessage_("admin", chatId, adminHelpText_());
     }
   } catch (error) {
-    console.error("Admin command failed: " + error.stack);
-    telegramSendMessage_("admin", chatId, "Command failed: " + error.message);
+    console.error("Admin command failed: " + safeDiagnostic_(error));
+    try {
+      telegramSendMessage_("admin", chatId, "Command failed: " + safeDiagnostic_(error));
+    } catch (noticeError) {
+      console.error("Could not send admin failure notice: " + safeDiagnostic_(noticeError));
+    }
   }
 }
 
@@ -81,7 +85,7 @@ function adminStatus_(chatId) {
     try {
       var info = telegramGetWebhookInfo_(bot);
       var status = info.url ? "active" : "missing";
-      if (info.last_error_message) status += "; last error: " + info.last_error_message;
+      if (info.last_error_message) status += "; last error: " + safeDiagnostic_(info.last_error_message);
       lines.push(bot + " webhook: " + status);
     } catch (error) {
       lines.push(bot + " webhook: check failed");
@@ -142,11 +146,11 @@ function adminAnnounce_(chatId, announcement) {
   var failed = 0;
   participants.forEach(function (participant) {
     try {
-      telegramSendMessage_("angel", participant.telegramId, "Organiser announcement:\n" + announcement);
+      telegramSendLongMessage_("angel", participant.telegramId, "Organiser announcement:\n" + announcement);
       delivered += 1;
     } catch (error) {
       failed += 1;
-      console.warn("Announcement failed for " + participant.personId + ": " + error.message);
+      console.warn("Announcement delivery failed: " + safeDiagnostic_(error));
     }
   });
   telegramSendMessage_("admin", chatId, "Announcement delivered to " + delivered + "; failed for " + failed + ".");

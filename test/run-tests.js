@@ -226,6 +226,7 @@ properties.set("FORM_RESPONSES_SHEET_NAME", "Form Responses 1");
 const propertyService = {
   getProperty(name) { return properties.get(name) || null; },
   setProperty(name, value) { properties.set(name, String(value)); return this; },
+  deleteProperty(name) { properties.delete(name); return this; },
   setProperties(values) { Object.entries(values).forEach(([k, v]) => properties.set(k, String(v))); return this; }
 };
 
@@ -347,6 +348,192 @@ test("project setup creates a separate roster tab in the response workbook", () 
   assert.equal(spreadsheet.getSheetByName("Form Intake (Private)"), null);
 });
 
+// Complete required main-section answers for tests below; keep shared fixture prefix unchanged.
+liveFormSheet.getRange(2, 10, 3, 2).setValues([
+  ["None", "Fine with anything"], ["None", "Fine with anything"], ["None", "Fine with anything"]
+]);
+
+function bindSyntheticStarts() {
+  const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
+  for (const participant of context.readParticipants_()) {
+    for (const [bot, column] of [["angel", 19], ["mortal", 20]]) {
+      if (roster.getRange(participant.rowNumber, column).getDisplayValues()[0][0]) {
+        properties.set(context.participantStartBindingKey_(participant.personId, bot), participant.telegramId);
+      }
+    }
+  }
+}
+
+test("PersonID lookup and organiser categories cannot be shadowed by names", () => {
+  const rows = [
+    {personId: "p1", name: "p2", telegramId: "10001", key: "One [10001]"},
+    {personId: "p2", name: "10001", telegramId: "20002", key: "Two [20002]"},
+    {personId: "p3", name: "Duplicate", telegramId: "30003", key: "Three [30003]"},
+    {personId: "p4", name: "Duplicate", telegramId: "40004", key: "Four [40004]"}
+  ];
+  assert.equal(context.findParticipantByPersonId_("p2", rows), rows[1]);
+  assert.equal(context.findParticipantByPersonId_("Duplicate", rows), null);
+  assert.equal(context.findParticipantByIdentifier_("p2", rows), rows[1]);
+  assert.equal(context.findParticipantByIdentifier_("10001", rows), rows[0]);
+  assert.equal(context.findParticipantByIdentifier_("Duplicate", rows), null);
+  assert.equal(context.findParticipantByPersonId_("p2", rows.concat(rows[1])), null);
+});
+
+test("reserved names and keys do not crash pairing or duplicate checks", () => {
+  const responses = [
+    {name: "constructor", issues: [], status: "Ready"},
+    {name: "constructor", issues: [], status: "Ready"},
+    {name: "__proto__", issues: [], status: "Ready"},
+    {name: "__proto__", issues: [], status: "Ready"}
+  ];
+  context.addDuplicateIssues_(responses, "name", "name", context.normalizedName_);
+  assert.deepEqual(responses.map(row => row.issues[0]), Array(4).fill("Duplicate name in form responses"));
+  const rows = [
+    {personId: "constructor", name: "Constructor", telegramId: "10001", sourceRow: 2, key: "constructor", mortalSelection: "__proto__", mode: "Angel", prankTolerance: "", formIssues: [], issues: [], status: "Ready"},
+    {personId: "__proto__", name: "Prototype", telegramId: "20002", sourceRow: 3, key: "__proto__", mortalSelection: "constructor", mode: "Angel", prankTolerance: "", formIssues: [], issues: [], status: "Ready"}
+  ];
+  const result = context.analyzePairings_(rows);
+  assert.deepEqual(rows.map(row => [row.mortalId, row.status]), [["__proto__", "Ready"], ["constructor", "Ready"]]);
+  assert.equal(result.indexes.byId.constructor, rows[0]);
+  assert.equal(result.indexes.byId.__proto__, rows[1]);
+});
+
+test("name shadowing a later PersonID cannot redirect start or reset writes", () => {
+  const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
+  const priorName = liveFormSheet.getRange(2, 2).getValues()[0][0];
+  const priorState = roster.getRange(2, 19, 2, 2).getValues();
+  const priorProperties = new Map(properties);
+  try {
+    liveFormSheet.getRange(2, 2).setValue("form:spreadsheet-test-id:3");
+    roster.getRange(2, 19, 2, 2).clearContent();
+    const bob = context.findParticipantByPersonId_("form:spreadsheet-test-id:3", context.readParticipants_());
+    context.markParticipantBotStarted_(bob, "angel");
+    assert.equal(roster.getRange(2, 19).getValues()[0][0], "");
+    assert.ok(roster.getRange(3, 19).getValues()[0][0]);
+    context.deregisterParticipant_(bob);
+    assert.deepEqual(roster.getRange(2, 19, 1, 2).getValues(), [["", ""]]);
+    assert.deepEqual(roster.getRange(3, 19, 1, 2).getValues(), [["", ""]]);
+  } finally {
+    liveFormSheet.getRange(2, 2).setValue(priorName);
+    roster.getRange(2, 19, 2, 2).setValues(priorState);
+    properties.clear();
+    priorProperties.forEach((value, key) => properties.set(key, value));
+  }
+});
+
+test("a corrected numeric account needs fresh starts on both bots without touching other rows", () => {
+  const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
+  const beforeForm = liveFormSheet.getRange(2, 1, 1, 16).getValues();
+  const beforeState = roster.getRange(2, 19, 3, 2).getValues();
+  const beforeProperties = new Map(properties);
+  const person = context.findParticipantByPersonId_("form:spreadsheet-test-id:2", context.readParticipants_());
+  try {
+    roster.getRange(2, 19, 3, 2).clearContent();
+    roster.getRange(2, 19, 1, 2).setValues([["legacy-angel", "legacy-mortal"]]);
+    properties.delete(context.participantStartBindingKey_(person.personId, "angel"));
+    properties.delete(context.participantStartBindingKey_(person.personId, "mortal"));
+    const legacy = context.findParticipantByPersonId_(person.personId, context.readParticipants_());
+    assert.equal(context.participantHasStartedBot_(legacy, "angel"), false);
+    assert.equal(context.participantHasStartedBot_(legacy, "mortal"), false);
+    context.markParticipantBotStarted_(person, "angel");
+    context.markParticipantBotStarted_(person, "mortal");
+    let current = context.findParticipantByPersonId_(person.personId, context.readParticipants_());
+    assert.equal(context.participantHasStartedBot_(current, "angel"), true);
+    assert.equal(context.participantHasStartedBot_(current, "mortal"), true);
+    liveFormSheet.getRange(2, 6).setValue("90009");
+    roster.setDisplayedValue(2, 14, "90009");
+    current = context.findParticipantByPersonId_(person.personId, context.readParticipants_());
+    assert.equal(context.participantHasStartedBot_(current, "angel"), false);
+    assert.equal(context.participantHasStartedBot_(current, "mortal"), false);
+    const untouched = roster.getRange(3, 19, 2, 2).getValues();
+    context.markParticipantBotStarted_(current, "angel");
+    current = context.findParticipantByPersonId_(person.personId, context.readParticipants_());
+    assert.equal(context.participantHasStartedBot_(current, "angel"), true);
+    assert.equal(context.participantHasStartedBot_(current, "mortal"), false);
+    context.markParticipantBotStarted_(current, "mortal");
+    assert.equal(context.participantHasStartedBot_(context.findParticipantByPersonId_(person.personId, context.readParticipants_()), "mortal"), true);
+    assert.deepEqual(roster.getRange(3, 19, 2, 2).getValues(), untouched);
+    context.deregisterParticipant_(current);
+    assert.deepEqual(roster.getRange(3, 19, 2, 2).getValues(), untouched);
+    assert.equal(context.participantHasStartedBot_(context.findParticipantByPersonId_(person.personId, context.readParticipants_()), "angel"), false);
+  } finally {
+    liveFormSheet.getRange(2, 1, 1, 16).setValues(beforeForm);
+    roster.setDisplayedValue(2, 14, "10001");
+    roster.getRange(2, 19, 3, 2).setValues(beforeState);
+    properties.clear();
+    beforeProperties.forEach((value, key) => properties.set(key, value));
+  }
+});
+
+test("Form normalization preserves free text, collapses mode spacing, and rejects missing required fields", () => {
+  const columns = context.mapFormColumns_(liveFormHeaders);
+  const row = liveFormSheet.getRange(3, 1, 1, 16).getValues()[0];
+  row[1] = "\u00a0Mary\u2003  Jane\u00a0";
+  row[5] = "20\u2003003";
+  row[8] = "\u00a0Board   games\u2003";
+  row[11] = "\u00a0Devil\u2003  and\u00a0Mortal 😈\u00a0";
+  row[2] = row[4] = row[6] = row[7] = row[8] = row[9] = row[10] = row[14] = "";
+  const parsed = context.parseFormResponse_(row, 3, columns);
+  assert.equal(parsed.name, "Mary\u2003  Jane");
+  assert.equal(parsed.telegramId, "20003");
+  assert.equal(parsed.mode, "Devil");
+  assert.deepEqual(Array.from(parsed.issues), [
+    "Missing gender", "Missing Telegram handle", "Missing year of study", "Missing faculty",
+    "Missing interests", "Missing special requirements", "Missing gender preference", "Devil response needs boundaries"
+  ]);
+  const angel = liveFormSheet.getRange(2, 1, 1, 16).getValues()[0];
+  angel[12] = angel[13] = angel[14] = "";
+  assert.ok(!context.parseFormResponse_(angel, 2, columns).issues.some(issue => /Devil response/.test(issue)));
+  assert.throws(() => context.mapFormColumns_(liveFormHeaders.filter(header => !header.startsWith("Gender?"))), /missing the expected column: gender/i);
+});
+
+test("pairing resolves literal special-character keys exactly and ignores inactive choices", () => {
+  const make = (id, name, choice, sourceRow) => ({
+    personId: id, name, telegramId: `${sourceRow}0002`, sourceRow, key: `${name} [${sourceRow}0002]`,
+    mortalSelection: choice, mode: "Angel", prankTolerance: "", formIssues: [], issues: [], status: "Ready"
+  });
+  const alice = make("a", "Alice", "Bob~* [30002]", 2);
+  const bob = make("b", "Bob~*", "C? [40002]", 3);
+  const charlie = make("c", "C?", "Alice [20002]", 4);
+  let rows = [alice, bob, charlie];
+  context.analyzePairings_(rows);
+  assert.deepEqual(rows.map(p => [p.mortalId, p.angelId, p.status]), [
+    ["b", "c", "Ready"], ["c", "a", "Ready"], ["a", "b", "Ready"]
+  ]);
+  rows = [make("a", "Alice", "bob~* [30002]", 2), make("b", "Bob~*", "C? [40002]", 3), make("c", "C?", "Alice [20002]", 4)];
+  context.analyzePairings_(rows);
+  assert.equal(rows[0].mortalId, "");
+  assert.ok(rows[0].issues.includes("Selected mortal is not a current participant"));
+  rows = [make("a", "Alice", "\u00a0Bob~* [30002]", 2), make("b", "Bob~*", "C? [40002]", 3), make("c", "C?", "Alice [20002]", 4)];
+  context.analyzePairings_(rows);
+  assert.equal(rows[0].mortalId, "", "mapping cells must match exact active dropdown keys, including whitespace");
+  rows = [make("a", "Alice", "Bob~* [30002]", 2), make("b", "Bob~*", "Alice [20002]", 3)];
+  rows[1].mode = "";
+  context.analyzePairings_(rows);
+  assert.equal(rows[0].assignmentFit, "UNASSIGNED", "invalid target mode must agree with formula diagnostics");
+  const formulas = context.rosterSpillFormulas_("form:test:");
+  for (const column of [8, 9, 10, 11, 13]) {
+    assert.doesNotMatch(formulas[column], /COUNTIF\(/, `column ${column} must not use wildcard counts`);
+    assert.match(formulas[column], /EXACT\(/, `column ${column} must require exact keys`);
+  }
+  assert.match(formulas[11], /\$A\$2:\$A<>""/, "inactive G values cannot count as incoming");
+});
+
+test("self-selection leaves mortal fields blank in runtime and generated H/I formulas", () => {
+  const participant = {
+    personId: "self", key: "Self [10001]", name: "Self", telegramId: "10001",
+    mode: "Devil", prankTolerance: "5", mortalSelection: "Self [10001]", issues: []
+  };
+  context.analyzePairings_([participant]);
+  assert.deepEqual([participant.mortalPrankTolerance, participant.roleToMortal], ["", ""]);
+  for (const column of [8, 9]) {
+    assert.ok(
+      context.rosterSpillFormulas_("form:test:")[column].includes('IF(EXACT(mortal,participantKey),"",IFNA('),
+      `column ${column} must leave self-selected mortal fields blank`
+    );
+  }
+});
+
 test("roster uses one spill formula per generated column", () => {
   setupProject();
   const roster = spreadsheet.getSheetByName("Angel Mortal Roster");
@@ -425,7 +612,8 @@ test("spill formulas use parser-equivalent edge normalization for Form text", ()
 
   const ranges = context.formFormulaRanges_();
   const formulas = context.rosterSpillFormulas_("form:test:");
-  const edgeTrimmed = source => `REGEXREPLACE(TO_TEXT(${source}),"^\\s+|\\s+$","")`;
+  const space = context.formWhitespaceClass_(true);
+  const edgeTrimmed = source => `REGEXREPLACE(TO_TEXT(${source}),"^${space}+|${space}+$","")`;
   const expectedByColumn = {
     1: ["name"],
     2: ["name"],
@@ -446,7 +634,7 @@ test("spill formulas use parser-equivalent edge normalization for Form text", ()
   });
   assert.doesNotMatch(formulas[21], /LOWER\(TRIM\(/);
   assert.doesNotMatch(formulas[18], /REGEXREPLACE\(TO_TEXT\(/);
-  assert.match(formulas[14], /REGEXREPLACE\(TO_TEXT\([^)]*\),"\\s",""\)/);
+  assert.ok(formulas[14].includes(`REGEXREPLACE(TO_TEXT(${ranges.telegramId}),"${space}","")`));
 });
 
 test("setup installs no spreadsheet triggers", () => {
@@ -534,7 +722,7 @@ test("sync validates manual one-to-one pairings and derives Angel or Devil roles
   assert.equal(byName.Alice.assignmentFit, "CHECK · DEVIL ?→4");
   assert.equal(byName.Bob.roleToMortal, "Angel");
   const formulaRow = roster.getRange(2, 8, 1, 6).getValues()[0];
-  assert.match(formulaRow[0], /XLOOKUP/);
+  assert.match(formulaRow[0], /FILTER\(\$E\$2:\$E,EXACT\(/);
   assert.match(formulaRow[2], /GOOD · DEVIL/);
   assert.match(formulaRow[5], /Appears as a mortal/);
 });
@@ -553,6 +741,7 @@ test("append-only roster state is preserved by Telegram ID", () => {
     ["bob-angel", "bob-mortal"],
     ["charlie-angel", "charlie-mortal"]
   ]);
+  bindSyntheticStarts();
   const preserved = Object.fromEntries(context.buildParticipantsFromForm_().map(p => [p.telegramId, p]));
   assert.equal(preserved["10001"].mortalSelection, byName.Bob.key);
   assert.equal(preserved["10001"].angelBotStartedAt, "alice-angel");
@@ -673,6 +862,7 @@ for (const [bot, targetRow, targetId, receivingBot] of [
     duplicate[1] = "Duplicate recipient";
     roster.getRange(2, 7, 3, 1).setValues([["Bob [20002]"], ["Charlie [30003]"], ["Alice [10001]"]]);
     roster.getRange(2, 19, 3, 2).setValues([["ready", "ready"], ["ready", "ready"], ["ready", "ready"]]);
+    bindSyntheticStarts();
     const update = text => ({update_id: 903, message: {from: {id: 10001}, chat: {id: 10001, type: "private"}, text}});
     try {
       const before = captureParticipantUpdates(bot, [update("before duplicate")]);
@@ -721,6 +911,7 @@ for (const [bot, targetRow, targetId, receivingBot] of [
       const update = text => ({update_id: 904, message: {from: {id: 10001}, chat: {id: 10001, type: "private"}, text}});
       roster.getRange(2, 7, 3, 1).setValues([["Bob [20002]"], ["Charlie [30003]"], ["Alice [10001]"]]);
       roster.getRange(2, 19, 3, 2).setValues([["ready", "ready"], ["ready", "ready"], ["ready", "ready"]]);
+      bindSyntheticStarts();
       try {
         if (invalidField.endsWith("declaration")) liveFormSheet.getRange(formRow, 16).clearContent();
         else liveFormSheet.getRange(formRow, 12, 1, 3).setValues([["Devil and Mortal", "9", "yes"]]);
@@ -835,7 +1026,7 @@ test("timestampless partial rows do not shift bot-start writes", () => {
   const originalBotState = roster.getRange(2, 19, 3, 2).getValues();
   liveFormSheet.getRange(5, 1, 2, 16).setValues([
     ["", "Ignored partial", "Female", "21-04", "@ignored", "49999", "Year 1", "Computing", "", "", "", "Angel and Mortal 👼", "", "", "", "I have understood the rules."],
-    ["8/27/2026 08:04:00", "Delta", "Female", "21-05", "@delta", "40004", "Year 1", "Computing", "", "", "", "Angel and Mortal 👼", "", "", "", "I have understood the rules."]
+    ["8/27/2026 08:04:00", "Delta", "Female", "21-05", "@delta", "40004", "Year 1", "Computing", "Chess", "None", "Fine with anything", "Angel and Mortal 👼", "", "", "", "I have understood the rules."]
   ]);
   roster.setDisplayedValue(5, 14, "40004");
   roster.setDisplayedValue(5, 15, "form:spreadsheet-test-id:6");
@@ -996,6 +1187,7 @@ function assertCurrentMappingWinsWithoutSync() {
     [byName.Alice.key]
   ]);
   roster.getRange(2, 19, 3, 2).setValues([["yes", "yes"], ["yes", "yes"], ["yes", "yes"]]);
+  bindSyntheticStarts();
   const relays = [];
   const originalRelay = context.relayTelegramMessage_;
   context.relayTelegramMessage_ = (...args) => relays.push(args);
@@ -1028,6 +1220,7 @@ test("a complete pair relays while unrelated mappings remain unfinished", () => 
     [""]
   ]);
   roster.getRange(3, 19).setValue("yes");
+  bindSyntheticStarts();
   const relays = [];
   const originalRelay = context.relayTelegramMessage_;
   context.relayTelegramMessage_ = (...args) => relays.push(args);
@@ -1121,7 +1314,7 @@ test("recipient not started sends one failure and no target traffic or state wri
 });
 
 for (const [targetStatus, expectedAttempts, feedback] of [
-  [500, 3, /could not send/i],
+  [500, 3, /delivery could not be confirmed.*may have arrived/i],
   [429, 1, /not sent.*wait at least 60 seconds/i]
 ]) {
 test(`target-bot ${targetStatus} failure sends one sender notice without changing state`, () => {
@@ -1134,6 +1327,7 @@ test(`target-bot ${targetStatus} failure sends one sender notice without changin
   const calls = [];
   roster.getRange(2, 7, 3, 1).setValues([[byName.Bob.key], [byName.Charlie.key], [byName.Alice.key]]);
   roster.getRange(3, 19).setValue("ready");
+  bindSyntheticStarts();
   properties.set("ANGEL_BOT_TOKEN", "test-angel-token");
   properties.set("MORTAL_BOT_TOKEN", "test-mortal-token");
   properties.set("SUPPORT_HANDLES", "@helper_one, @helper_two");
@@ -1182,6 +1376,7 @@ test("a failed sender notice is attempted once and does not re-enter webhook fee
   let senderAttempts = 0;
   roster.getRange(2, 7, 3, 1).setValues([[byName.Bob.key], [byName.Charlie.key], [byName.Alice.key]]);
   roster.getRange(3, 19).setValue("ready");
+  bindSyntheticStarts();
   context.relayTelegramMessage_ = () => { throw new Error("target unavailable"); };
   context.telegramSendMessage_ = () => {
     senderAttempts += 1;
@@ -1342,7 +1537,7 @@ test("webhook failures prompt the user and remain retryable", () => {
   }
   assert.equal(attempts, 2);
   assert.equal(sent.length, 1);
-  assert.match(sent.map(entry => entry[2]).join("\n"), /send it again/i);
+  assert.match(sent.map(entry => entry[2]).join("\n"), /could not confirm what happened.*may have been processed/i);
   assert.match(sent.map(entry => entry[2]).join("\n"), /@organiser/);
   assert.doesNotMatch(properties.get("LAST_WEBHOOK_STATUS"), /BOT_TOKEN/);
 });
@@ -1415,6 +1610,7 @@ test("Telegram API retries flood-control and server failures", () => {
 
 for (const [retryAfter, failuresBefore] of [[11, 0], [60, 0], [2, 2]]) {
   test(`Telegram ${retryAfter}-second flood wait stops when delay or attempts exceed the retry budget`, () => {
+    cache.clear();
     const originalFetch = context.UrlFetchApp.fetch;
     const originalSleep = context.Utilities.sleep;
     properties.set("ANGEL_BOT_TOKEN", "angel-test-token");
@@ -1445,6 +1641,7 @@ for (const [retryAfter, failuresBefore] of [[11, 0], [60, 0], [2, 2]]) {
 }
 
 test("Telegram honors a ten-second flood wait before retrying", () => {
+  cache.clear();
   const originalFetch = context.UrlFetchApp.fetch;
   const originalSleep = context.Utilities.sleep;
   properties.set("ANGEL_BOT_TOKEN", "angel-test-token");

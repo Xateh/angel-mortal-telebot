@@ -11,7 +11,7 @@ from scripts.verify_repository import load_denylist, scan_bytes, scan_repository
 
 
 class RepositorySafetyTests(unittest.TestCase):
-    def scan_temporary_repository(self, files, message="synthetic commit", replacement=False):
+    def scan_temporary_repository(self, files, message="synthetic commit", replacement=False, delete=True):
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory)
             subprocess.run(["git", "init", "--quiet"], cwd=repository, check=True)
@@ -23,13 +23,16 @@ class RepositorySafetyTests(unittest.TestCase):
                 check=True,
             )
             for name, content in files.items():
-                (repository / name).write_bytes(content)
+                path = repository / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
             subprocess.run(["git", "add", "."], cwd=repository, check=True)
             subprocess.run(["git", "commit", "--quiet", "-m", message], cwd=repository, check=True)
-            for name in files:
-                (repository / name).unlink()
-            subprocess.run(["git", "add", "-u"], cwd=repository, check=True)
-            subprocess.run(["git", "commit", "--quiet", "-m", "remove fixture"], cwd=repository, check=True)
+            if delete:
+                for name in files:
+                    (repository / name).unlink()
+                subprocess.run(["git", "add", "-u"], cwd=repository, check=True)
+                subprocess.run(["git", "commit", "--quiet", "-m", "remove fixture"], cwd=repository, check=True)
             if replacement:
                 subprocess.run(["git", "replace", "HEAD", "HEAD^"], cwd=repository, check=True)
             original_directory = Path.cwd()
@@ -66,6 +69,47 @@ class RepositorySafetyTests(unittest.TestCase):
         findings = scan_bytes("synthetic fixture", assignment)
         self.assertEqual([item.rule for item in findings], ["literal webhook key assignment"])
 
+    def test_rejects_all_role_keys_in_json_source_and_dotenv_assignments(self):
+        for role in (b"ANGEL", b"MORTAL", b"ADMIN"):
+            field = role + b"_WEBHOOK_" + b"KEY"
+            value = b"z" * 40
+            assignments = (
+                b'{"' + field + b'":"' + value + b'"}',
+                field + b' = "' + value + b'"',
+                field + b"=" + value,
+            )
+            for assignment in assignments:
+                with self.subTest(role=role, assignment=assignment[:20]):
+                    findings = scan_bytes("synthetic fixture", assignment)
+                    self.assertIn("literal webhook key assignment", [item.rule for item in findings])
+
+    def test_rejects_role_key_in_current_and_deleted_history(self):
+        field = b"MORTAL_WEBHOOK_" + b"KEY"
+        value = b"q" * 40
+        for name, assignment, delete in (
+            ("synthetic/config.json", b'{"' + field + b'":"' + value + b'"}', False),
+            ("synthetic/.env.local", field + b"=" + value, True),
+        ):
+            with self.subTest(name=name, delete=delete):
+                findings = self.scan_temporary_repository({name: assignment}, delete=delete)
+                self.assertIn("literal webhook key assignment", [item.rule for item in findings])
+
+    def test_ignores_root_and_nested_private_export_and_dev_var_paths(self):
+        repository = Path(__file__).resolve().parents[1]
+        for path in (
+            "exports/fixture.csv",
+            "nested/exports/fixture.csv",
+            ".dev.vars.local",
+            "nested/.dev.vars.local",
+        ):
+            with self.subTest(path=path):
+                result = subprocess.run(
+                    ["git", "check-ignore", "--no-index", "--quiet", "--", path],
+                    cwd=repository,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0)
+
     def test_rejects_participant_like_csv_row(self):
         row = b"Par" + b"ticipant" + b"," + b"1000" + b"001" + b",Room\n"
         findings = scan_bytes("synthetic.csv", row)
@@ -92,10 +136,32 @@ class RepositorySafetyTests(unittest.TestCase):
     def test_allows_formula_and_empty_cached_xlsx_cells(self):
         worksheet = (
             b"<worksheet><sheetData><row r=\"1\"><c r=\"A1\"><v>1</v></c></row>"
-            b"<row r=\"2\"><c r=\"A2\"><f>SUM(A1:A1)</f><v>1</v></c><c r=\"B2\"><v/></c></row>"
+            b"<row r=\"2\"><c r=\"A2\"><f>SUM(A1:A1)</f><v/></c><c r=\"B2\"><v/></c></row>"
             b"</sheetData></worksheet>"
         )
         self.assertEqual(self.scan_workbook(worksheet), [])
+
+    def test_rejects_every_nonempty_formula_cache(self):
+        for cached in (b"Ada", b"#05-123", b"hiking", b"42", b"   "):
+            with self.subTest(cached=cached):
+                worksheet = (
+                    b"<worksheet><sheetData><row r=\"1\"/>"
+                    b"<row r=\"2\"><c r=\"A2\" t=\"str\"><f>LOOKUP()</f><v>"
+                    + cached
+                    + b"</v></c></row></sheetData></worksheet>"
+                )
+                findings = self.scan_workbook(worksheet)
+                self.assertEqual([item.rule for item in findings], ["nonempty XLSX formula cache"])
+
+    def test_rejects_formula_cache_with_nonempty_shared_string_index(self):
+        worksheet = (
+            b"<worksheet><sheetData><row r=\"1\"/>"
+            b"<row r=\"2\"><c r=\"A2\" t=\"s\"><f>LOOKUP()</f><v>0</v></c></row>"
+            b"</sheetData></worksheet>"
+        )
+        shared_strings = b"<sst><si><t></t></si></sst>"
+        findings = self.scan_workbook(worksheet, shared_strings)
+        self.assertEqual([item.rule for item in findings], ["nonempty XLSX formula cache"])
 
     def test_rejects_formula_error_cache(self):
         worksheet = (

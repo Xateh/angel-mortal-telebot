@@ -8,6 +8,11 @@ function doGet() {
   }
 }
 
+function isTelegramUpdate_(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
+    Number.isSafeInteger(value.update_id) && value.update_id >= 0;
+}
+
 function doPost(e) {
   var bot = String(e && e.parameter && e.parameter.bot || "").toLowerCase();
   var suppliedKey = String(e && e.parameter && e.parameter.key || "");
@@ -28,8 +33,12 @@ function doPost(e) {
   try {
     update = JSON.parse(e.postData.contents);
   } catch (error) {
-    console.error("Malformed webhook payload for " + bot + ": " + error.message);
+    console.error("Malformed webhook payload for " + bot + ".");
     recordWebhookStatus_(bot, "", "error: malformed webhook payload");
+    return textOutput_("ok");
+  }
+  if (!isTelegramUpdate_(update)) {
+    recordWebhookStatus_(bot, "", "error: invalid webhook update");
     return textOutput_("ok");
   }
 
@@ -37,8 +46,8 @@ function doPost(e) {
   try {
     updateState = beginUpdate_(bot, update.update_id);
   } catch (error) {
-    console.error("Webhook deduplication failed for " + bot + ": " + error.stack);
-    recordWebhookStatus_(bot, update.update_id, "error: " + String(error.message || error));
+    console.error("Webhook deduplication failed for " + bot + ": " + safeDiagnostic_(error));
+    recordWebhookStatus_(bot, update.update_id, "error: " + safeDiagnostic_(error));
     notifyWebhookFailure_(bot, update);
     return textOutput_("retry");
   }
@@ -52,16 +61,16 @@ function doPost(e) {
       handleParticipantUpdate_(bot, update);
     }
   } catch (error) {
-    console.error("Webhook processing failed for " + bot + ": " + error.stack);
+    console.error("Webhook processing failed for " + bot + ": " + safeDiagnostic_(error));
     forgetUpdate_(bot, update.update_id);
-    recordWebhookStatus_(bot, update.update_id, "error: " + String(error.message || error));
+    recordWebhookStatus_(bot, update.update_id, "error: " + safeDiagnostic_(error));
     notifyWebhookFailure_(bot, update);
     return textOutput_("retry");
   }
   try {
     markUpdateComplete_(bot, update.update_id);
   } catch (error) {
-    console.error("Could not mark completed update: " + error.message);
+    console.error("Could not mark completed update: " + safeDiagnostic_(error));
   }
   recordWebhookStatus_(bot, update.update_id, "ok");
   return textOutput_("ok");
@@ -72,21 +81,21 @@ function notifyWebhookFailure_(bot, update) {
   if (!message || !message.chat || message.chat.type !== "private") return;
   try {
     telegramSendMessage_(bot, message.chat.id, withOrganiserHelp_(
-      "I couldn't process that message. Please send it again."
+      "I could not confirm what happened to that message. It may have been processed; please check with the organisers before resending."
     ));
   } catch (error) {
-    console.error("Could not notify user about webhook failure: " + error.message);
+    console.error("Could not notify user about webhook failure: " + safeDiagnostic_(error));
   }
 }
 
 function recordWebhookStatus_(bot, updateId, status) {
   try {
     getScriptProperties_().setProperties({
-      LAST_WEBHOOK_STATUS: String(bot) + (updateId === "" ? "" : " update " + String(updateId)) + ": " + String(status).slice(0, 1500),
+      LAST_WEBHOOK_STATUS: String(bot) + (updateId === "" ? "" : " update " + String(updateId)) + ": " + safeDiagnostic_(status).slice(0, 1500),
       LAST_WEBHOOK_STATUS_AT: new Date().toISOString()
     });
   } catch (error) {
-    console.error("Could not record webhook status: " + error.message);
+    console.error("Could not record webhook status: " + safeDiagnostic_(error));
   }
 }
 
@@ -126,6 +135,6 @@ function forgetUpdate_(bot, updateId) {
   try {
     CacheService.getScriptCache().remove(updateCacheKey_(bot, updateId));
   } catch (error) {
-    console.error("Could not clear failed update marker: " + error.message);
+    console.error("Could not clear failed update marker: " + safeDiagnostic_(error));
   }
 }

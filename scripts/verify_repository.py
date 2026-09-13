@@ -23,7 +23,7 @@ REPOSITORY_PATTERNS = {
     "possible Apps Script deployment URL": rb"https://script\.google\.com/macros/s/AKfycb[A-Za-z0-9_-]{20,}/(?:exec|dev)\b",
     "possible Apps Script deployment ID": rb"\bAKfycb[A-Za-z0-9_-]{20,}\b",
     "possible Cloudflare Workers URL": rb"https://[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.workers\.dev(?:/[^\s\"'<>]*)?",
-    "literal webhook key assignment": rb"\b(?:ANGEL|MORTAL|ADMIN)_WEBHOOK_KEY\s*[:=]\s*[\"'][A-Za-z0-9_-]{32,}[\"']",
+    "literal webhook key assignment": rb"(?<![A-Za-z0-9_])[\"']?(?:ANGEL|MORTAL|ADMIN)_WEBHOOK_KEY[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_-]{32,}(?=[\"'\s,}\]]|$)",
 }
 
 DATA_ARTIFACT_SUFFIXES = {".csv", ".tsv"}
@@ -58,7 +58,7 @@ def xml_child(element: ElementTree.Element, name: str) -> ElementTree.Element | 
 
 
 def xml_text(element: ElementTree.Element) -> str:
-    return "".join(element.itertext()).strip()
+    return "".join(child.text or "" for child in element.iter() if child.tag.rsplit("}", 1)[-1] == "t")
 
 
 def shared_strings(archive: zipfile.ZipFile) -> list[str]:
@@ -75,12 +75,13 @@ def xlsx_cell_value(cell: ElementTree.Element, strings: list[str]) -> str:
         inline_string = xml_child(cell, "is")
         return "" if inline_string is None else xml_text(inline_string)
     value = xml_child(cell, "v")
-    if value is None or not (raw_value := (value.text or "").strip()):
+    if value is None or not (raw_value := value.text or ""):
         return ""
     if cell_type != "s":
         return raw_value
     try:
-        return strings[int(raw_value)] if 0 <= int(raw_value) < len(strings) else raw_value
+        index = int(raw_value.strip())
+        return strings[index] if 0 <= index < len(strings) else raw_value
     except ValueError:
         return raw_value
 
@@ -90,13 +91,15 @@ def literal_xlsx_cell(cell: ElementTree.Element, strings: list[str]) -> bool:
 
 
 def formula_xlsx_cache_rule(cell: ElementTree.Element, strings: list[str]) -> str | None:
-    if xml_child(cell, "f") is None or not (cached := xlsx_cell_value(cell, strings)):
+    value = xml_child(cell, "v")
+    if xml_child(cell, "f") is None or value is None or not (value.text or ""):
         return None
+    cached = xlsx_cell_value(cell, strings)
     if cell.get("t") == "e" or cached in FORMULA_ERROR_VALUES:
         return "formula XLSX worksheet error cache"
     if PARTICIPANT_FORMULA_CACHE_PATTERN.search(cached):
         return "possible participant formula cache"
-    return None
+    return "nonempty XLSX formula cache"
 
 
 def scan_xlsx_bytes(path: str, content: bytes, denylist: tuple[bytes, ...] = ()) -> list[Finding]:
