@@ -137,7 +137,7 @@ function loadBuilder(schema) {
     Logger: {log: () => { logCalls += 1; }},
     console: {log: () => { logCalls += 1; }}
   });
-  new vm.Script(fs.readFileSync(builderPath, "utf8"), {filename: "FormSetup.gs"}).runInContext(context);
+  new vm.Script(fs.readFileSync(builderPath, "utf8"), {filename: builderPath}).runInContext(context);
   return {
     context,
     formApp,
@@ -332,4 +332,28 @@ test("schema titles map to every real Form importer field", () => {
   const driftedHeaders = headers.slice();
   driftedHeaders[expected.telegramId] = "Changed numeric identifier title";
   assert.throws(() => context.mapFormColumns_(driftedHeaders), /missing the expected column/);
+});
+
+for (const [label,mutate,pattern] of [
+  ["duplicate section", s => s.sections.push({...s.sections[0]}), /unique/],
+  ["blank section", s => {s.sections[0].key="";}, /unique/],
+  ["wrong first section", s => {s.sections[0].key="other";}, /first Form section/],
+  ["unknown question section", s => {s.questions[0].section="absent";}, /Unknown Form section/],
+  ["bad final navigation", s => {s.sections.at(-1).after="main";}, /final Form section/],
+  ["unsupported validation", s => {s.questions.find(q=>q.type==="short_answer").validation={type:"unsupported"};}, /Unsupported text validation/]
+]) test("builder rejects "+label+" before saving bindings",()=>{
+  const schema=loadSchema();mutate(schema);const h=loadBuilder(schema);
+  assert.throws(()=>h.context.createEmptyAngelMortalStack(),pattern);
+  assert.equal(h.propertyWrites.length,0);assert.equal(h.rosterSetupCalls(),0);assert.equal(h.triggerCalls(),0);
+});
+for(const stage of ["sheet","form","destination","properties","roster"]) test("stack "+stage+" failure stops without retry or extra resources",()=>{
+  const h=loadBuilder(loadSchema());const error=new Error("synthetic setup failure");
+  if(stage==="sheet")h.context.SpreadsheetApp.create=()=>{throw error;};
+  if(stage==="form")h.formApp.create=()=>{throw error;};
+  if(stage==="destination") {const create=h.formApp.create;h.formApp.create=(...args)=>{const f=create(...args);f.setDestination=()=>{throw error;};return f;};}
+  if(stage==="properties")h.context.getScriptProperties_=()=>({setProperties(){throw error;}});
+  if(stage==="roster")h.context.setupParticipantsSheet_=()=>{throw error;};
+  assert.throws(()=>h.context.createEmptyAngelMortalStack(),/synthetic setup failure/);
+  assert.equal(h.spreadsheets.length,stage==="sheet"?0:1);assert.equal(h.forms.length,["sheet","form"].includes(stage)?0:1);
+  assert.equal(h.propertyWrites.length,stage==="roster"?1:0);assert.equal(h.triggerCalls(),0);assert.equal(h.logCalls(),0);
 });

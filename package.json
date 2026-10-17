@@ -8,6 +8,10 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "test": "node test/run-tests.js && node --test test/form-schema.test.js test/delivery-regressions.test.js test/guess-form.test.js"
+    "test": "node test/run-tests.js && node --test test/*.test.js",
+    "test:coverage": "c8 --all --extension .gs --extension .js --extension .mjs --include \"*.gs\" --include \"gateway/server.js\" --include \"gateway/worker.mjs\" --reporter text --reporter json --reporter json-summary node scripts/run-js-tests.cjs"
+  },
+  "devDependencies": {
+    "c8": "10.1.3"
   }
 }

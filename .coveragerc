@@ -1,0 +1,7 @@
+[run]
+branch = True
+data_file = coverage/.coverage
+include = scripts/verify_repository.py
+
+[report]
+show_missing = True

@@ -1,22 +1,9 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const Module = require("node:module");
 const {test} = require("node:test");
 
-function fixture() {
-  const filename = path.join(__dirname, "run-tests.js");
-  const source = fs.readFileSync(filename, "utf8");
-  const boundary = source.indexOf('test("project setup creates');
-  assert.ok(boundary > 0, "Fixture boundary changed");
-  const loaded = new Module(filename, module);
-  loaded.filename = filename;
-  loaded.paths = Module._nodeModulePaths(__dirname);
-  loaded._compile(source.slice(0, boundary) + "\nmodule.exports = {context, spreadsheet, liveFormSheet, properties, cache, setupProject};", filename);
-  return loaded.exports;
-}
+const {createCoreFixture: fixture} = require("./helpers/core-fixture");
 
 function captureTelegram(value, responder = () => ({status: 200, body: {ok: true, result: {message_id: 1}}})) {
   const {context, properties} = value;

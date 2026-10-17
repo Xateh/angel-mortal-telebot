@@ -334,3 +334,47 @@ test("timer installer waits for script lock before checking or creating triggers
   assert.throws(() => h.context.installGuessingFormRefreshTrigger(), /GUESS_BUSY/);
   assert.equal(h.triggers.length, 0);
 });
+
+test("new guessing form with empty roster keeps placeholders without writes",()=>{
+  const h=harness([]);h.context.createGuessingForm();const writes=h.calls.writes;
+  assert.deepEqual(json(h.context.refreshGuessingFormOptions()),{ok:true,changed:false,participantCount:0,angelCount:0,devilCount:0});assert.equal(h.calls.writes,writes);
+});
+for(const role of ["Angel","Devil"])test("missing "+role+" candidates uses nonempty placeholder",()=>{
+  const h=harness(sample.map(p=>({...p,roleToMortal:role==="Angel"?"Devil":"Angel"})));
+  h.context.createGuessingForm();h.context.refreshGuessingFormOptions();
+  const item=h.forms[0].getItemById(Number(h.properties[role==="Angel"?"GUESS_ANGEL_ITEM_ID":"GUESS_DEVIL_ITEM_ID"]));
+  assert.deepEqual(json(options(item)),["No candidates available"]);
+});
+for(const field of ["GUESS_PERSON_ITEM_ID","GUESS_ANGEL_ITEM_ID","GUESS_DEVIL_ITEM_ID"])test("rollback after "+field+" failure restores all three lists",()=>{
+  const h=harness();h.context.createGuessingForm();h.context.refreshGuessingFormOptions();
+  const lists=["GUESS_PERSON_ITEM_ID","GUESS_ANGEL_ITEM_ID","GUESS_DEVIL_ITEM_ID"].map(key=>h.forms[0].getItemById(Number(h.properties[key])));
+  const before=lists.map(item=>item.getChoices().slice());
+  h.participants.forEach(p=>{p.name+=" revised";});h.forms[0].getItemById(Number(h.properties[field])).failNextWrite=true;
+  assert.throws(()=>h.context.refreshGuessingFormOptions(),/GUESS_REFRESH_FAILED/);
+  lists.forEach((item,i)=>assert.deepEqual(item.getChoices(),before[i]));assert.equal(h.calls.telegram,0);assert.equal(h.calls.rosterWrites,0);
+});
+test("rollback restoration failure has distinct fixed error and releases lock",()=>{
+  const h=harness();h.context.createGuessingForm();h.context.refreshGuessingFormOptions();let releases=0;
+  h.context.LockService.getScriptLock=()=>({tryLock:()=>true,releaseLock:()=>releases++});
+  h.participants.forEach(p=>{p.name+=" revised";});
+  const item=h.forms[0].getItemById(Number(h.properties.GUESS_DEVIL_ITEM_ID));item.setChoices=()=>{throw new Error("synthetic upstream details");};
+  assert.throws(()=>h.context.refreshGuessingFormOptions(),e=>/GUESS_RESTORE_FAILED/.test(e.message)&&!e.message.includes("synthetic upstream"));assert.equal(releases,1);
+});
+for(const [stage,code] of [["form","FORM_UNAVAILABLE"],["roster","ROSTER_UNAVAILABLE"],["validation","PAIRING_NOT_READY"],["lock","LOCK_UNAVAILABLE"]])test("guessing "+stage+" failure leaves choice lists unchanged",()=>{
+  const h=harness();h.context.createGuessingForm();const writes=h.calls.writes;
+  const fail=()=>{throw new Error("synthetic upstream details");};
+  if(stage==="form")h.context.FormApp.openById=fail;
+  if(stage==="roster")h.context.readParticipants_=fail;
+  if(stage==="validation")h.context.validateParticipants_=fail;
+  if(stage==="lock")h.context.LockService.getScriptLock=fail;
+  assert.throws(()=>h.context.refreshGuessingFormOptions(),new RegExp("GUESS_"+code));assert.equal(h.calls.writes,writes);
+});
+for(const method of ["installGuessingFormRefreshTrigger","removeGuessingFormRefreshTrigger"])for(const stage of ["list","mutation"])test(method+" handles "+stage+" failure and releases lock",()=>{
+  const h=harness();h.context.createGuessingForm();h.context.installGuessingFormRefreshTrigger();let releases=0;
+  h.context.LockService.getScriptLock=()=>({tryLock:()=>true,releaseLock:()=>releases++});
+  const fail=()=>{throw new Error("synthetic trigger details");};
+  if(stage==="list")h.context.ScriptApp.getProjectTriggers=fail;
+  else if(method.startsWith("install")){h.triggers.length=0;h.context.ScriptApp.newTrigger=fail;}
+  else h.context.ScriptApp.deleteTrigger=fail;
+  assert.throws(()=>h.context[method](),/GUESS_TRIGGER_FAILED/);assert.equal(releases,1);
+});

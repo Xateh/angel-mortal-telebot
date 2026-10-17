@@ -46,6 +46,8 @@ python -m unittest test.test_repository_safety test.test_workbook_artifact
 python scripts/verify_repository.py
 ```
 
+For reproducible production coverage and the behavior-to-test matrix, see [offline coverage](docs/coverage.md).
+
 All commands must pass. `npm test` includes core relay, delivery regressions, signup schema, and guessing Form tests. `npm run build` creates ignored `dist/Code.gs` from the source files and `config/form-schema.json`. These local mocks and structural checks do not establish native Google Sheets recalculation or live Telegram delivery; the isolated checklist below is a separate verification step.
 
 `templates/angel-mortal-empty.xlsx` is a participant-free reference template for Google Sheets, not an Excel-compatible calculation model. Its formulas use Google Sheets functions. The reproducible setup below generates the native Form and roster directly from the source scripts; do not substitute an Excel recalculation/export that replaces formulas or saves participant/error caches. Verify formula results in an isolated Google Sheet before adopting a revised formula build.

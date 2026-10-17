@@ -243,3 +243,48 @@ class RepositorySafetyTests(unittest.TestCase):
         content = workbook.getvalue()
         findings = self.scan_temporary_repository({"a.bin": content, "z.xlsx": content})
         self.assertIn("literal XLSX worksheet cell", [item.rule for item in findings])
+
+    def test_denylist_missing_unreadable_tracked_and_ignored_cases(self):
+        from scripts import verify_repository as scanner
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "fixture-denylist"
+            with patch.dict(os.environ, {"AM_PRIVATE_DENYLIST": str(path)}, clear=True):
+                with self.assertRaisesRegex(ValueError, "readable"):
+                    load_denylist()
+                path.write_bytes(b"synthetic-identifier\n\n")
+                with patch.object(Path, "read_bytes", side_effect=PermissionError("synthetic")):
+                    with self.assertRaisesRegex(ValueError, "readable"):
+                        load_denylist()
+                with patch.object(scanner.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)):
+                    with self.assertRaisesRegex(ValueError, "ignored"):
+                        load_denylist()
+                with patch.object(scanner.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
+                    self.assertEqual(load_denylist(), (b"synthetic-identifier",))
+
+    def test_main_reports_only_location_and_category(self):
+        from contextlib import redirect_stdout
+        from scripts import verify_repository as scanner
+        for findings, code in [([], 0), ([scanner.Finding("fixture.txt", "private denylist entry")], 1)]:
+            output = io.StringIO()
+            with patch.object(scanner, "scan_repository", return_value=findings), redirect_stdout(output):
+                self.assertEqual(scanner.main(), code)
+            self.assertEqual(output.getvalue().strip(), "fixture.txt: private denylist entry" if findings else "repository safety check passed")
+
+    def test_workbook_detection_without_extension_and_nonworkbook_zip(self):
+        worksheet = b'<worksheet><sheetData><row r="1"/><row r="bad"><c r="A2" t="inlineStr"><is><t>Synthetic</t></is></c></row></sheetData></worksheet>'
+        workbook = io.BytesIO()
+        with zipfile.ZipFile(workbook, "w") as archive:
+            archive.writestr("xl/worksheets/", b"")
+            archive.writestr("xl/worksheets/sheet1.xml", worksheet)
+        findings = self.scan_temporary_repository({"fixture.bin": workbook.getvalue()})
+        self.assertIn("literal XLSX worksheet cell", [finding.rule for finding in findings])
+        other = io.BytesIO()
+        with zipfile.ZipFile(other, "w") as archive:
+            archive.writestr("fixture.txt", b"ordinary text")
+        self.assertEqual(self.scan_temporary_repository({"fixture.zip": other.getvalue(), "bad.bin": b"PKinvalid"}), [])
+
+    def test_invalid_shared_string_index_is_retained_for_review(self):
+        from scripts import verify_repository as scanner
+        from xml.etree import ElementTree
+        cell = ElementTree.fromstring('<c t="s"><v>invalid</v></c>')
+        self.assertEqual(scanner.xlsx_cell_value(cell, []), "invalid")

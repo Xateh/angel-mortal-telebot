@@ -87,7 +87,8 @@ export async function handleRequest(request, env, fetchImpl = fetch) {
     }
     return respond(200, "ok");
   } catch (error) {
-    console.error("Telegram gateway failure: " + error.message);
+    // Upstream and parser exceptions may contain request data or private URLs.
+    console.error("Telegram gateway failure; request or upstream processing failed.");
     return respond(503, "gateway unavailable");
   }
 }

@@ -19,8 +19,9 @@ function readRequestBody(request) {
     request.on("data", chunk => {
       size += chunk.length;
       if (size > MAX_UPDATE_BYTES) {
-        reject(new Error("Telegram update exceeds the gateway size limit."));
-        request.destroy();
+        const error = new Error("Telegram update exceeds the gateway size limit.");
+        error.code = "UPDATE_TOO_LARGE";
+        reject(error);
         return;
       }
       chunks.push(chunk);
@@ -110,7 +111,12 @@ function createServer(options = {}) {
       }
       send(response, 200, "ok");
     } catch (error) {
-      console.error("Telegram gateway failure: " + error.message);
+      if (error && error.code === "UPDATE_TOO_LARGE") {
+        send(response, 413, "update too large");
+        return;
+      }
+      // Upstream and parser exceptions may contain request data or private URLs.
+      console.error("Telegram gateway failure; request or upstream processing failed.");
       send(response, 503, "gateway unavailable");
     }
   });
