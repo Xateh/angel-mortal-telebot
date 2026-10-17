@@ -53,6 +53,28 @@ function pair(value) {
   return roster;
 }
 
+test("deregistration clears readiness and tells both bots how to register again", () => {
+  const value = fixture();
+  pair(value);
+  const participant = value.context.readParticipants_()[0];
+  for (const bot of ["angel", "mortal"]) {
+    value.context.markParticipantBotStarted_(participant, bot);
+    assert.equal(value.context.participantHasStartedBot_(participant, bot), true);
+  }
+  const calls = captureTelegram(value);
+  value.context.handleSelfDeregister_(participant.telegramId, participant);
+  assert.deepEqual(calls.map(call => call.bot), ["angel", "mortal"]);
+  for (const call of calls) {
+    assert.equal(call.payload.chat_id, participant.telegramId);
+    assert.match(call.payload.text, /Send \/start to both the Angel bot and the Mortal bot/);
+    assert.doesNotMatch(call.payload.text, /code/i);
+  }
+  const current = value.context.readParticipants_()[0];
+  for (const bot of ["angel", "mortal"]) {
+    assert.equal(value.context.participantHasStartedBot_(current, bot), false);
+  }
+});
+
 test("Unicode chunks preserve all code points and trailing safety text", () => {
   const {context} = fixture();
   for (const text of [

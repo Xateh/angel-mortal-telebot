@@ -38,7 +38,6 @@ git clone <PRIVATE_REPOSITORY_URL>
 cd angel-mortal-telegram-relay
 npm ci
 npm test
-node --test test/form-schema.test.js
 npm run build
 npm --prefix gateway ci
 npm --prefix gateway test
@@ -60,6 +59,8 @@ python scripts/verify_repository.py
 ```
 
 Release mode rejects a missing, empty, unreadable, or tracked denylist.
+
+Run history checks in a complete (non-shallow) checkout with all relevant remote branches and tags fetched. The scanner checks tracked files and objects reachable from local Git refs; it cannot inspect unfetched or unreachable history. A passing pattern scan without the private denylist is not strict release clearance, and even a passing denylist scan only covers the identifiers supplied. Review workbook hidden content and metadata as well before public release.
 
 ## 4. Create the empty Google Form and Sheet
 

@@ -415,7 +415,7 @@ function handleSelfDeregister_(telegramId, participant) {
   }
   AM_CONFIG.PARTICIPANT_BOTS.forEach(function (bot) {
     try {
-      telegramSendMessage_(bot, telegramId, "Successfully deregistered. Use your code to register again.");
+      telegramSendMessage_(bot, telegramId, "Successfully deregistered. Send /start to both the Angel bot and the Mortal bot to register again.");
     } catch (error) {
       console.warn("Deregister notice failed for " + bot + ": " + safeDiagnostic_(error));
     }
