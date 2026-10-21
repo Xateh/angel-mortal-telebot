@@ -31,5 +31,6 @@ jobs:
       - run: npm --prefix gateway test
       - run: npm audit
       - run: npm --prefix gateway audit
-      - run: python -m unittest test.test_repository_safety test.test_workbook_artifact
+      # Discover directly to avoid the hosted Python standard-library test package.
+      - run: python -m unittest discover -s test -p 'test_*.py'
       - run: python scripts/verify_repository.py
