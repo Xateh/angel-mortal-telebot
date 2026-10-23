@@ -41,8 +41,9 @@ npm test
 npm run build
 npm --prefix gateway ci
 npm --prefix gateway test
+npm audit
 npm --prefix gateway audit
-python -m unittest test.test_repository_safety test.test_workbook_artifact
+python -m unittest discover -s test -p 'test_*.py'
 python scripts/verify_repository.py
 ```
 
