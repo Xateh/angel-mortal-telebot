@@ -309,7 +309,20 @@ Skip the Admin-secret command if it was never set. Each `secret delete` creates 
 
 ## 15. Security and rotation
 
-Store Apps Script bot tokens and webhook keys only in Script Properties. Store Worker values only with encrypted Wrangler secrets. Keep participant data only in the private Form response Sheet. Repository `.env`, `.dev.vars`, `.clasp.json`, `.wrangler`, logs, snapshots, exports, credentials, and private verification files are ignored.
+Store Apps Script bot tokens and webhook keys only in Script Properties. Store Worker values only with encrypted Wrangler secrets. Keep signup responses, roster mappings and guessing responses in private Forms and Sheets; participant data also passes through the relay and persists in the stores described below. Repository `.env`, `.dev.vars`, `.clasp.json`, `.wrangler`, logs, snapshots, exports, credentials, and private verification files are ignored.
+
+### Participant data and retention
+
+The source handles data in several places:
+
+- **Forms and Sheets:** signup details, roster mappings, registration timestamps and optional guessing responses. The assigned giver receives the mortal's name, room and introduction, including study details, interests, special requirements and applicable prank boundaries. Organizers must explain this disclosure and confirm the permitted recipients before collecting or sharing profiles.
+- **Telegram and relay processing:** messages, captions and media pass through the gateway and Apps Script to Telegram. Media is downloaded and re-uploaded without a metadata scrub; message contents, filenames or embedded metadata can identify a sender. Relay routing does not promise anonymity. Delivered messages and recipient copies remain outside the bot's deletion control.
+- **Script Properties and caches:** account bindings retain PersonID/bot-to-Telegram-ID associations without automatic expiry. The latest webhook status retains an update ID and a sanitized diagnostic until overwritten. Deduplication markers request 120-second or six-hour cache lifetimes; per-chat cooldown keys include chat IDs and request at most six hours. These caches are not a durable message queue or a guarantee about provider backups.
+- **Logs and local copies:** gateway application logs use generic errors; Apps Script diagnostics redact selected configured secrets and URLs, not arbitrary participant text. Provider access logs, exports, snapshots and backups require separate review. Ignored local files are still present until explicitly removed.
+
+Deregistration clears bot-start timestamps and account bindings; it does not delete signup records, guessing responses or Telegram copies. No automatic event-data retention schedule is implemented. Organizers must inventory the actual stores, decide retention periods and permitted access, verify Form/Sheet sharing and response visibility, and check deployed bots, gateways, provider logs and backups. Follow the separate closure procedure below; shutting down delivery does not erase stored data. Any deletion requires approval for the identified resources.
+
+These are source behaviors, not verification of a deployed service's settings. Record operational checks per resource: verification of an isolated rehearsal Form or Sheet does not establish the settings of event resources, guessing Forms, add-ons or provider logs.
 
 If a bot token leaks, revoke it in BotFather, replace the Script Property, and reinstall that isolated webhook. To rotate a webhook key, first remove webhooks, replace the Apps Script key with a freshly generated value, update the matching Worker secret, then reinstall and inspect webhooks.
 
