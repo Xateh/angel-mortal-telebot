@@ -385,4 +385,8 @@ Use this only when the organizer has approved ending the identified event. Unlik
 
 The retired bots no longer send welcome, relay, or failure messages. A persistent closure auto-reply would require leaving a service running and is not part of this shutdown.
 
-For another event, start at section 3 with new resources; do not reopen the retired stack or reuse participant bindings. Before publishing an archive, rerun the strict current/history scan and empty-workbook checks. Exclude event data, answer keys, resource identifiers, snapshots, and secrets. Public visibility and a reuse license are separate owner decisions; source access alone is not a license. Native Sheets/Form behavior and live Telegram delivery still require the controlled checks in sections 4 and 11; an offline pass is not a fresh deployment rehearsal. Guess scoring and participant-name ownership remain outside the implemented guessing-choice feature.
+For another event, start at section 3 with new resources; do not reopen the retired stack or reuse participant bindings. Before publishing an archive, rerun the strict current/history scan and empty-workbook checks. Exclude event data, answer keys, resource identifiers, snapshots, and secrets. Public visibility remains a separate owner decision; reuse is governed by the [MIT License](LICENSE). Native Sheets/Form behavior and live Telegram delivery still require the controlled checks in sections 4 and 11; an offline pass is not a fresh deployment rehearsal. Guess scoring and participant-name ownership remain outside the implemented guessing-choice feature.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE), copyright 2026 Xateh. Third-party dependencies retain their respective licenses.
