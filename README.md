@@ -29,6 +29,8 @@ Mappings are read afresh; registration is intentionally persistent. A private Sc
 - A free Telegram account with access to BotFather.
 - Git, Python 3, and maintained Node.js LTS 22 or newer. Node 20 is end-of-life and is not supported by this package.
 
+The configured deployment uses Cloudflare Workers (`gateway/worker.mjs`), not the local Node runtime. If you use the optional Node server (`gateway/server.js`), use a maintained, security-patched Node release: on Node 22, require **22.23.4 or newer**, which bundles Undici 6.29.1 ([security release](https://nodejs.org/en/blog/release/v22.23.4)). Other maintained Node lines must include equivalent fixes. The server uses Node's built-in `fetch`; updating npm dependencies does not patch it. CI uses patched Node 22, but neither CI nor this requirement verifies or updates an existing deployment.
+
 Do not continue if Apps Script deployment does not offer anonymous `Anyone` access. Telegram cannot sign into a restricted web app.
 
 ## 3. Clone and verify before creating resources
