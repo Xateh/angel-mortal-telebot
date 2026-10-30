@@ -1408,7 +1408,7 @@ test("webhook reset drops pending updates for every configured bot", () => {
 });
 
 test("the runbook scopes every Wrangler mutation to one verified-new Worker name", () => {
-  const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+  const readme = fs.readFileSync(path.join(root, "docs", "deployment.md"), "utf8");
   assert.match(readme, /\$workerName\s*=\s*Read-Host/);
   assert.match(readme, /confirm[^\n]+does not (?:already )?exist/i);
   const mutationCommands = readme.split(/\r?\n/).filter(line =>
