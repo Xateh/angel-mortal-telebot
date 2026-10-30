@@ -50,8 +50,8 @@ No owned domain is required: the Worker can use its `workers.dev` address. The d
 ## Quick start: download and check
 
 ```bash
-git clone https://github.com/Xateh/angel-mortal-telegram-relay.git
-cd angel-mortal-telegram-relay
+git clone https://github.com/Xateh/angel-mortal-telebot.git
+cd angel-mortal-telebot
 npm ci
 npm test
 npm run build

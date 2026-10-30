@@ -42,8 +42,8 @@ Do not continue if Apps Script deployment does not offer anonymous `Anyone` acce
 ## 3. Clone and verify before creating resources
 
 ```powershell
-git clone https://github.com/Xateh/angel-mortal-telegram-relay.git
-cd angel-mortal-telegram-relay
+git clone https://github.com/Xateh/angel-mortal-telebot.git
+cd angel-mortal-telebot
 npm ci
 npm test
 npm run build
