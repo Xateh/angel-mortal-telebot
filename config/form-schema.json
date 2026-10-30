@@ -50,7 +50,7 @@
       "section": "main",
       "type": "short_answer",
       "title": "What’s your room no.! [#LL-RRR]🤌",
-      "description": "e.g. #20-114, #18-108E for suites",
+      "description": "Use #LL-RRR (floor-room), with a trailing letter if required for suites.",
       "validation": {
         "type": "text_contains",
         "value": "#",
