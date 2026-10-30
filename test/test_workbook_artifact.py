@@ -186,7 +186,7 @@ class EmptyWorkbookArtifactTests(unittest.TestCase):
         ) + "]"
 
         def edge_trim(source: str) -> str:
-            return f'REGEXREPLACE(TO_TEXT(\'Form Responses 1\'!{source}),"^{whitespace}+|{whitespace}+$","")'
+            return f'REGEXREPLACE(TO_TEXT(INDIRECT("\'Form Responses 1\'!{source}")),"^{whitespace}+|{whitespace}+$","")'
 
         expected_sources = {
             "A2": ["B2:B"],
@@ -205,12 +205,22 @@ class EmptyWorkbookArtifactTests(unittest.TestCase):
         self.assertNotIn("LOWER(TRIM(", formula("U2"))
         self.assertNotIn(edge_trim("A2:A"), formula("R2"))
         self.assertIn(
-            f'REGEXREPLACE(TO_TEXT(\'Form Responses 1\'!F2:F),"{whitespace}","")',
+            f'REGEXREPLACE(TO_TEXT(INDIRECT("\'Form Responses 1\'!F2:F")),"{whitespace}","")',
             formula("N2"),
         )
 
         self.assertIn("SUMPRODUCT(N(EXACT($G$2:$G,participantKey)),N($A$2:$A<>\"\")", formula("K2"))
         self.assertIn("Devil response needs boundaries", formula("U2"))
+
+    def test_source_ranges_are_insertion_stable_string_references(self) -> None:
+        for reference, cell in self.cells("Angel Mortal Roster").items():
+            formula = formula_text(cell)
+            if not formula or column_number(reference) not in FORM_SOURCE_COLUMNS:
+                continue
+            self.assertIn('INDIRECT("\'Form Responses 1\'!', formula, reference)
+            # Every source A1 range must occur inside an INDIRECT string argument.
+            without_indirect = re.sub(r'INDIRECT\("\'Form Responses 1\'![A-Z]+2:[A-Z]+"\)', '', formula)
+            self.assertNotIn("'Form Responses 1'!", without_indirect, reference)
 
     def test_roster_has_no_literal_data_or_copied_formulas(self) -> None:
         for reference, cell in self.cells("Angel Mortal Roster").items():

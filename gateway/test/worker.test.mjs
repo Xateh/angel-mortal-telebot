@@ -16,7 +16,7 @@ test("Wrangler package targets the Worker entrypoint without plaintext variables
   assert.equal(Object.hasOwn(config, "vars"), false);
   assert.equal(JSON.stringify(config).includes("WEBHOOK_KEY"), false);
   assert.match(packageJson.devDependencies.wrangler, /^\^?4\./);
-  assert.equal(packageJson.engines.node, ">=22");
+  assert.equal(packageJson.engines.node, ">=22.23.4");
 });
 
 test("Cloudflare URL builder preserves the deployment URL and adds authentication", () => {
