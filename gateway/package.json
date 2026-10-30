@@ -7,9 +7,14 @@
     "test": "node --test test/*.test.js test/*.test.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.23.4"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
+  },
+  "overrides": {
+    "miniflare@5.20261012.1-beta": {
+      "undici": "7.30.1"
+    }
   }
 }

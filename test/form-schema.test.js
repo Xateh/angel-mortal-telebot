@@ -179,7 +179,7 @@ test("schema preserves the approved public-safe Form contract", () => {
   );
   assert.equal(
     digest(schema.questions.map(question => [question.key, question.title, question.description || "", question.choices || []])),
-    "0efc5552d1b94050e1cfd849e5c948840df7e65c9d4994dad82e1a296ebf62f9"
+    "cab4a836fb593a10bdb86d393567204d47e3ce4f938903e3971b0d2851383170"
   );
   // Digests pin approved wording without copying question text outside the schema.
   assert.equal(

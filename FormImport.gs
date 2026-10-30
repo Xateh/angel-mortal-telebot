@@ -180,13 +180,21 @@ function formFormulaRanges_() {
   var sheet = getFormResponseSheet_();
   var columns = mapFormColumns_(readHeaderRow_(sheet));
   var sheetName = quotedSheetName_(sheet.getName());
-  var timestamp = sheetName + "!" + sheetColumnLabel_(columns.timestamp + 1) + "2:" + sheetColumnLabel_(columns.timestamp + 1);
+  // Google Forms inserts response rows and Sheets rewrites direct A1 ranges.
+  // Keep the source start at row 2 in a string reference instead. This protects
+  // Form append behavior, not manual sorting/deletion or participant row IDs.
+  function sourceRange(column) {
+    var label = sheetColumnLabel_(column + 1);
+    var address = sheetName + "!" + label + "2:" + label;
+    return 'INDIRECT("' + address.replace(/"/g, '""') + '")';
+  }
+  var timestamp = sourceRange(columns.timestamp);
   var ranges = {timestamp: timestamp};
   Object.keys(columns).forEach(function (field) {
     if (field === "timestamp") return;
     ranges[field] = columns[field] < 0
       ? "IF(ROW(" + timestamp + "),\"\",\"\")"
-      : sheetName + "!" + sheetColumnLabel_(columns[field] + 1) + "2:" + sheetColumnLabel_(columns[field] + 1);
+      : sourceRange(columns[field]);
   });
   return ranges;
 }

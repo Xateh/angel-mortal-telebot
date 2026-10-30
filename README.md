@@ -18,6 +18,8 @@ Telegram sends each bot webhook to a small Cloudflare Worker. The Worker checks 
 
 The response Sheet contains `Angel Mortal Roster` with 21 columns. `Mortal` (column G) is the organizer's only manual pairing input. `Angel Bot Started At` (S) and `Mortal Bot Started At` (T) are bot-written state. Every other participant or pairing column has one spill formula in row 2. The roster needs no form-submit or edit trigger. The optional guessing Form has a separate, opt-in hourly refresh timer described in section 16; it does not update roster rows.
 
+Source formulas use string-based `INDIRECT` ranges anchored at response row 2, so automatic Form row insertion does not move the intake start. If the source tab is renamed, first update the `FORM_RESPONSES_SHEET_NAME` Script Property to its exact new name, then rerun `setupProject` to regenerate the ranges. If source columns are rearranged without renaming the tab, rerun `setupProject`. This does not make manual sorting, deletion or insertion among existing participants safe.
+
 Keep `Form Responses 1` and roster rows append-only. Do not sort, delete, or insert underlying participant rows: doing so can misalign G, S, and T. Use filter views for temporary sorting. The `Mortal` dropdown, `Pairing Status`, issue text, and traffic-light formatting update from current responses and mappings. Google Sheets expands within its normal row capacity; if a spill reaches the last row, add rows with Sheets' native **Add rows** command and clear anything blocking the spill.
 
 Mappings are read afresh; registration is intentionally persistent. A private Script Property binds each PersonID/bot registration to the numeric Telegram ID that sent `/start`. Changing that ID leaves any old S/T timestamp as history, but it no longer grants readiness to the new account: the corrected account must send `/start` to each bot again. Old installations without bindings also require fresh `/start`; do not bulk-copy bindings from timestamps. This repository update does not migrate an existing production project.
@@ -28,6 +30,8 @@ Mappings are read afresh; registration is intentionally persistent. A private Sc
 - A free Cloudflare account. The default `workers.dev` address needs no domain; Cloudflare advertises free signup without a credit card.
 - A free Telegram account with access to BotFather.
 - Git, Python 3, and maintained Node.js LTS 22 or newer. Node 20 is end-of-life and is not supported by this package.
+
+The configured deployment uses Cloudflare Workers (`gateway/worker.mjs`), not the local Node runtime. If you use the optional Node server (`gateway/server.js`), use a maintained, security-patched Node release: on Node 22, require **22.23.4 or newer**, which bundles Undici 6.29.1 ([security release](https://nodejs.org/en/blog/release/v22.23.4)). Other maintained Node lines must include equivalent fixes. The server uses Node's built-in `fetch`; updating npm dependencies does not patch it. CI uses patched Node 22, but neither CI nor this requirement verifies or updates an existing deployment.
 
 Do not continue if Apps Script deployment does not offer anonymous `Anyone` access. Telegram cannot sign into a restricted web app.
 
@@ -307,7 +311,20 @@ Skip the Admin-secret command if it was never set. Each `secret delete` creates 
 
 ## 15. Security and rotation
 
-Store Apps Script bot tokens and webhook keys only in Script Properties. Store Worker values only with encrypted Wrangler secrets. Keep participant data only in the private Form response Sheet. Repository `.env`, `.dev.vars`, `.clasp.json`, `.wrangler`, logs, snapshots, exports, credentials, and private verification files are ignored.
+Store Apps Script bot tokens and webhook keys only in Script Properties. Store Worker values only with encrypted Wrangler secrets. Keep signup responses, roster mappings and guessing responses in private Forms and Sheets; participant data also passes through the relay and persists in the stores described below. Repository `.env`, `.dev.vars`, `.clasp.json`, `.wrangler`, logs, snapshots, exports, credentials, and private verification files are ignored.
+
+### Participant data and retention
+
+The source handles data in several places:
+
+- **Forms and Sheets:** signup details, roster mappings, registration timestamps and optional guessing responses. The assigned giver receives the mortal's name, room and introduction, including study details, interests, special requirements and applicable prank boundaries. Organizers must explain this disclosure and confirm the permitted recipients before collecting or sharing profiles.
+- **Telegram and relay processing:** messages, captions and media pass through the gateway and Apps Script to Telegram. Media is downloaded and re-uploaded without a metadata scrub; message contents, filenames or embedded metadata can identify a sender. Relay routing does not promise anonymity. Delivered messages and recipient copies remain outside the bot's deletion control.
+- **Script Properties and caches:** account bindings retain PersonID/bot-to-Telegram-ID associations without automatic expiry. The latest webhook status retains an update ID and a sanitized diagnostic until overwritten. Deduplication markers request 120-second or six-hour cache lifetimes; per-chat cooldown keys include chat IDs and request at most six hours. These caches are not a durable message queue or a guarantee about provider backups.
+- **Logs and local copies:** gateway application logs use generic errors; Apps Script diagnostics redact selected configured secrets and URLs, not arbitrary participant text. Provider access logs, exports, snapshots and backups require separate review. Ignored local files are still present until explicitly removed.
+
+Deregistration clears bot-start timestamps and account bindings; it does not delete signup records, guessing responses or Telegram copies. No automatic event-data retention schedule is implemented. Organizers must inventory the actual stores, decide retention periods and permitted access, verify Form/Sheet sharing and response visibility, and check deployed bots, gateways, provider logs and backups. Follow the separate closure procedure below; shutting down delivery does not erase stored data. Any deletion requires approval for the identified resources.
+
+These are source behaviors, not verification of a deployed service's settings. Record operational checks per resource: verification of an isolated rehearsal Form or Sheet does not establish the settings of event resources, guessing Forms, add-ons or provider logs.
 
 If a bot token leaks, revoke it in BotFather, replace the Script Property, and reinstall that isolated webhook. To rotate a webhook key, first remove webhooks, replace the Apps Script key with a freshly generated value, update the matching Worker secret, then reinstall and inspect webhooks.
 
@@ -385,4 +402,8 @@ Use this only when the organizer has approved ending the identified event. Unlik
 
 The retired bots no longer send welcome, relay, or failure messages. A persistent closure auto-reply would require leaving a service running and is not part of this shutdown.
 
-For another event, start at section 3 with new resources; do not reopen the retired stack or reuse participant bindings. Before publishing an archive, rerun the strict current/history scan and empty-workbook checks. Exclude event data, answer keys, resource identifiers, snapshots, and secrets. Public visibility and a reuse license are separate owner decisions; source access alone is not a license. Native Sheets/Form behavior and live Telegram delivery still require the controlled checks in sections 4 and 11; an offline pass is not a fresh deployment rehearsal. Guess scoring and participant-name ownership remain outside the implemented guessing-choice feature.
+For another event, start at section 3 with new resources; do not reopen the retired stack or reuse participant bindings. Before publishing an archive, rerun the strict current/history scan and empty-workbook checks. Exclude event data, answer keys, resource identifiers, snapshots, and secrets. Public visibility remains a separate owner decision; reuse is governed by the [MIT License](LICENSE). Native Sheets/Form behavior and live Telegram delivery still require the controlled checks in sections 4 and 11; an offline pass is not a fresh deployment rehearsal. Guess scoring and participant-name ownership remain outside the implemented guessing-choice feature.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE), copyright 2026 Xateh. Third-party dependencies retain their respective licenses.
